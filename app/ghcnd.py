@@ -107,5 +107,8 @@ def elements_present(df: pd.DataFrame) -> set:
 def summer_slice(df: pd.DataFrame, year: int, start_md=(6, 1), end_md=(8, 31)) -> pd.DataFrame:
     start = datetime.date(year, *start_md)
     end = datetime.date(year, *end_md)
-    mask = (df["DATE"].dt.date >= start) & (df["DATE"].dt.date <= end)
+    # Compare DATE directly as datetime64 rather than via the `.dt.date`
+    # accessor -- see app/stats.py::_season_slice for why (~55x cheaper,
+    # identical results since DATE has no time-of-day component).
+    mask = (df["DATE"] >= pd.Timestamp(start)) & (df["DATE"] <= pd.Timestamp(end))
     return df.loc[mask]

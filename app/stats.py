@@ -74,8 +74,15 @@ def summer_window(year: int, lat: float | None) -> tuple[datetime.date, datetime
 
 
 def _season_slice(df: pd.DataFrame, year: int, lat: float | None) -> tuple[pd.DataFrame, int]:
+    """Called once per candidate year per stat block (~350 times for a
+    typical station's compute_stats call, per [stats timing] profiling --
+    see scripts/profile_wrapped.py). Compares DATE directly as datetime64
+    rather than via the `.dt.date` accessor: `.dt.date` materializes a
+    Python datetime.date object for every row on every call, which was
+    ~55x more expensive than comparing datetime64 timestamps directly
+    (both give identical results since DATE has no time-of-day component)."""
     start, end = summer_window(year, lat)
-    mask = (df["DATE"].dt.date >= start) & (df["DATE"].dt.date <= end)
+    mask = (df["DATE"] >= pd.Timestamp(start)) & (df["DATE"] <= pd.Timestamp(end))
     total_days = (end - start).days + 1
     return df.loc[mask], total_days
 
