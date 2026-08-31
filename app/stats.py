@@ -45,6 +45,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from app.timing import Stopwatch
+
 logger = logging.getLogger(__name__)
 
 PERCENTILE = 95
@@ -296,10 +298,21 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
             "percentile_rank": {"insufficient_data": True},
         }
 
+    timing = Stopwatch()
+    with timing.split("anomaly"):
+        anomaly = compute_anomaly(df, year, lat)
+    with timing.split("hot_days_trend"):
+        hot_days_trend = compute_hot_days_trend(df, year, lat)
+    with timing.split("hottest_nights"):
+        hottest_nights = compute_hottest_nights(df, year, lat)
+    with timing.split("percentile_rank"):
+        percentile_rank = compute_percentile_rank(df, year, lat)
+    print(f"[stats timing] {timing.summary()}")
+
     return {
         "summer_year": year,
-        "anomaly": compute_anomaly(df, year, lat),
-        "hot_days_trend": compute_hot_days_trend(df, year, lat),
-        "hottest_nights": compute_hottest_nights(df, year, lat),
-        "percentile_rank": compute_percentile_rank(df, year, lat),
+        "anomaly": anomaly,
+        "hot_days_trend": hot_days_trend,
+        "hottest_nights": hottest_nights,
+        "percentile_rank": percentile_rank,
     }

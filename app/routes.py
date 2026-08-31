@@ -8,6 +8,7 @@ from app.config import STADIA_API_KEY, STATS_CACHE_DIR
 from app.ghcnd import StationFetchError
 from app.narrative import get_narrator
 from app.stats import compute_stats
+from app.timing import Stopwatch
 
 bp = Blueprint("main", __name__)
 
@@ -87,12 +88,17 @@ def wrapped(station_id):
         return render_template("wrapped.html", station=station, cards=cached["cards"],
                                 stats=cached["stats"], year=year)
 
-    try:
-        df = ghcnd.get_station_dataframe(station_id)
-    except StationFetchError:
-        abort(502, f"Could not fetch data for station {station_id}")
+    timing = Stopwatch()
 
-    if not gate.station_summer_data_complete(df, year):
+    with timing.split("fetch_parse"):
+        try:
+            df = ghcnd.get_station_dataframe(station_id)
+        except StationFetchError:
+            abort(502, f"Could not fetch data for station {station_id}")
+
+    with timing.split("gate_check"):
+        data_complete = gate.station_summer_data_complete(df, year)
+    if not data_complete:
         season = ghcnd.summer_slice(df, year)
         start, end = gate.summer_window(year)
         days_in_summer = (end - start).days + 1
@@ -110,12 +116,17 @@ def wrapped(station_id):
             reason="data_incomplete",
         )
 
-    stats = compute_stats(df, year, station.get("lat"))
-    cards = get_narrator().build_cards(stats, station)
+    with timing.split("compute_stats"):
+        stats = compute_stats(df, year, station.get("lat"))
+    with timing.split("narrative"):
+        cards = get_narrator().build_cards(stats, station)
 
-    _save_cached_wrapped(station_id, year, {
-        "stats": stats, "cards": cards,
-        "computed_at": datetime.datetime.utcnow().isoformat(),
-    })
+    with timing.split("cache_save"):
+        _save_cached_wrapped(station_id, year, {
+            "stats": stats, "cards": cards,
+            "computed_at": datetime.datetime.utcnow().isoformat(),
+        })
+
+    print(f"[wrapped timing] {station_id}: {timing.summary()}")
 
     return render_template("wrapped.html", station=station, cards=cards, stats=stats, year=year)

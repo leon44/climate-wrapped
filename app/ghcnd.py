@@ -83,9 +83,9 @@ def _parse_csv(csv_text: str) -> pd.DataFrame:
     for col, divisor in _TENTHS_COLUMNS.items():
         if col not in df.columns:
             continue
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-        df.loc[df[col].isin(MISSING_SENTINELS), col] = pd.NA
-        df[col] = df[col] / divisor
+        values = pd.to_numeric(df[col], errors="coerce")
+        values = values.where(~values.isin(MISSING_SENTINELS))
+        df[col] = values / divisor
 
     df = df.sort_values("DATE").reset_index(drop=True)
     return df
