@@ -41,11 +41,18 @@ before rounding at the edge.
 import calendar
 import datetime
 import logging
+import sys
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+def _trace(msg: str) -> None:
+    """Temporary tracing to isolate a prod SIGSEGV -- see app/routes.py's
+    _trace for why. Remove once the crash is isolated."""
+    print(f"[trace] {msg}", file=sys.stderr, flush=True)
 
 PERCENTILE = 95
 MAX_MISSING_FRACTION = 0.25
@@ -98,11 +105,13 @@ def _candidate_years(df: pd.DataFrame) -> range:
 def _qualifying_summers(df: pd.DataFrame, lat: float | None, columns: tuple[str, ...]) -> dict:
     """{year: season_df} for every year whose season has <=10% missing data
     across `columns`."""
+    _trace(f"_qualifying_summers: scanning candidate years for columns={columns}")
     out = {}
     for year in _candidate_years(df):
         season, total_days = _season_slice(df, year, lat)
         if _summer_qualifies(season, total_days, columns):
             out[year] = season
+    _trace(f"_qualifying_summers: found {len(out)} qualifying years")
     return out
 
 
@@ -121,12 +130,14 @@ def _linear_trend_per_decade(series: dict) -> float:
     observed to overflow an internal buffer and SIGSEGV the worker. A 1D fit
     over a handful of points doesn't need LAPACK at all.
     """
+    _trace(f"_linear_trend_per_decade: fitting over {len(series)} points")
     years = np.array(sorted(series.keys()), dtype=float)
     if len(years) < 2:
         return 0.0
     counts = np.array([series[y] for y in sorted(series.keys())], dtype=float)
     years_centered = years - years.mean()
     slope_per_year = float((years_centered * counts).sum() / (years_centered ** 2).sum())
+    _trace("_linear_trend_per_decade: done")
     return slope_per_year * 10
 
 
@@ -144,7 +155,9 @@ def compute_anomaly(df: pd.DataFrame, current_year: int, lat: float | None) -> d
         return {"insufficient_data": True}
 
     baseline_years = sorted(historical.keys(), reverse=True)[:MAX_BASELINE_YEARS]
+    _trace(f"compute_anomaly: pd.concat over {len(baseline_years)} baseline years")
     baseline_values = pd.concat([historical[y]["TMAX"] for y in baseline_years]).dropna()
+    _trace("compute_anomaly: concat done, computing mean")
     baseline_mean = float(baseline_values.mean())
 
     current_values = current_season["TMAX"].dropna()
@@ -171,8 +184,11 @@ def compute_hot_days_trend(df: pd.DataFrame, current_year: int, lat: float | Non
         )
         return {"insufficient_data": True}
 
+    _trace(f"compute_hot_days_trend: pd.concat over {len(historical)} historical years")
     all_historical_tmax = pd.concat([s["TMAX"] for s in historical.values()]).dropna()
+    _trace(f"compute_hot_days_trend: np.percentile over {len(all_historical_tmax)} values")
     threshold = float(np.percentile(all_historical_tmax, PERCENTILE))
+    _trace("compute_hot_days_trend: percentile done")
 
     historical_series = {y: int((s["TMAX"] > threshold).sum()) for y, s in historical.items()}
     current_count = int((current_season["TMAX"] > threshold).sum())
@@ -200,14 +216,19 @@ def compute_hottest_nights(df: pd.DataFrame, current_year: int, lat: float | Non
         )
         return {"insufficient_data": True}
 
+    _trace(f"compute_hottest_nights: pd.concat over {len(historical)} historical years")
     all_historical_tmin = pd.concat([s["TMIN"] for s in historical.values()]).dropna()
+    _trace(f"compute_hottest_nights: np.percentile over {len(all_historical_tmin)} values")
     threshold = float(np.percentile(all_historical_tmin, PERCENTILE))
+    _trace("compute_hottest_nights: percentile done")
 
     historical_series = {y: int((s["TMIN"] > threshold).sum()) for y, s in historical.items()}
     current_count = int((current_season["TMIN"] > threshold).sum())
     full_series = {**historical_series, current_year: current_count}
 
+    _trace("compute_hottest_nights: computing diurnal range bonus")
     diurnal_current, diurnal_baseline = _diurnal_range_bonus(df, current_year, lat)
+    _trace("compute_hottest_nights: diurnal range bonus done")
 
     return {
         "night_threshold_c": round(threshold),
@@ -232,10 +253,12 @@ def _diurnal_range_bonus(df: pd.DataFrame, current_year: int, lat: float | None)
         return None, None
 
     diurnal_current = round(float((current_season["TMAX"] - current_season["TMIN"]).mean()), 1)
+    _trace(f"_diurnal_range_bonus: pd.concat over {len(historical)} historical years")
     historical_ranges = pd.concat(
         [(s["TMAX"] - s["TMIN"]) for s in historical.values()]
     ).dropna()
     diurnal_baseline = round(float(historical_ranges.mean()), 1)
+    _trace("_diurnal_range_bonus: done")
     return diurnal_current, diurnal_baseline
 
 
@@ -296,10 +319,20 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
             "percentile_rank": {"insufficient_data": True},
         }
 
+    _trace("compute_stats: computing anomaly")
+    anomaly = compute_anomaly(df, year, lat)
+    _trace("compute_stats: computing hot_days_trend")
+    hot_days_trend = compute_hot_days_trend(df, year, lat)
+    _trace("compute_stats: computing hottest_nights")
+    hottest_nights = compute_hottest_nights(df, year, lat)
+    _trace("compute_stats: computing percentile_rank")
+    percentile_rank = compute_percentile_rank(df, year, lat)
+    _trace("compute_stats: all blocks done")
+
     return {
         "summer_year": year,
-        "anomaly": compute_anomaly(df, year, lat),
-        "hot_days_trend": compute_hot_days_trend(df, year, lat),
-        "hottest_nights": compute_hottest_nights(df, year, lat),
-        "percentile_rank": compute_percentile_rank(df, year, lat),
+        "anomaly": anomaly,
+        "hot_days_trend": hot_days_trend,
+        "hottest_nights": hottest_nights,
+        "percentile_rank": percentile_rank,
     }
