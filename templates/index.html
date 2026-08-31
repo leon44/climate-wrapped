@@ -36,6 +36,11 @@
     </div>
   </div>
 
+  <div id="wrapped-loading" class="loading-overlay" hidden aria-live="polite" aria-busy="true">
+    <p id="loading-message" class="loading-overlay__message"></p>
+    <div class="spinner" aria-hidden="true"></div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="{{ url_for('static', filename='js/map.js') }}"></script>

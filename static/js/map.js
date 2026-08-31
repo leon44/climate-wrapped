@@ -26,6 +26,42 @@ function wrappedUrl(stationId) {
     : `/wrapped/${stationId}`;
 }
 
+// Station lookups (id -> station object) so the delegated click handler
+// below can find the name/record_years for a clicked link without having
+// to smuggle them through HTML attributes.
+const stationCache = new Map();
+
+function cacheStations(list) {
+  list.forEach((s) => stationCache.set(s.id, s));
+  return list;
+}
+
+const loadingOverlay = document.getElementById("wrapped-loading");
+const loadingMessage = document.getElementById("loading-message");
+
+// /wrapped/<id> does real work server-side (fetching + crunching a
+// station's full daily record) before it can render anything, so a plain
+// click-to-navigate would leave the browser looking unresponsive for a
+// few seconds. Show a loading overlay first, then navigate -- the browser
+// keeps the current page (overlay included) on screen until the new page
+// is ready to paint, so the spinner covers the whole wait.
+function goToWrapped(station) {
+  loadingMessage.textContent =
+    `Crunching, loading and wrapping ${station.record_years} years of data from ${station.name}…`;
+  loadingOverlay.hidden = false;
+  window.location.href = wrappedUrl(station.id);
+}
+
+document.addEventListener("click", (e) => {
+  const link = e.target.closest("[data-wrapped-link]");
+  if (!link) return;
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const station = stationCache.get(link.dataset.stationId);
+  if (!station) return; // unknown station -- let the normal href navigate
+  e.preventDefault();
+  goToWrapped(station);
+});
+
 const map = L.map("map").setView([53.5511, 9.9937], 5); // Europe, centered on Hamburg
 
 L.tileLayer(
@@ -76,7 +112,7 @@ map.addLayer(stationOverview);
 
 async function fetchAllStations() {
   const resp = await fetch("/api/stations/all");
-  return resp.ok ? resp.json() : [];
+  return resp.ok ? cacheStations(await resp.json()) : [];
 }
 
 async function loadStationOverview() {
@@ -86,7 +122,7 @@ async function loadStationOverview() {
     marker.bindPopup(
       `<strong>${s.name}${s.state ? ", " + s.state : ""}</strong><br>` +
       `${s.record_years} yrs (${s.first_year}–${s.last_year})<br>` +
-      `<a class="wrapped-btn" href="${wrappedUrl(s.id)}">` +
+      `<a class="wrapped-btn" data-wrapped-link data-station-id="${s.id}" href="${wrappedUrl(s.id)}">` +
       '<svg class="wrapped-btn__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2l11 6-11 6V2z"/></svg>' +
       "View wrapped</a>"
     );
@@ -112,6 +148,8 @@ function renderShortlist(stationList) {
     const row = document.createElement("a");
     row.className = "station-row";
     row.href = wrappedUrl(s.id);
+    row.dataset.wrappedLink = "";
+    row.dataset.stationId = s.id;
     row.innerHTML = `
       <span class="station-row__name">${s.name}${s.state ? ", " + s.state : ""}</span>
       <span class="station-row__meta">${s.distance_km ? s.distance_km + " km · " : ""}${s.record_years} yrs (${s.first_year}–${s.last_year})</span>
@@ -119,7 +157,7 @@ function renderShortlist(stationList) {
     rows.appendChild(row);
 
     const marker = L.marker([s.lat, s.lon], { icon: highlightIcon }).addTo(map).bindPopup(s.name);
-    marker.on("click", () => { window.location.href = wrappedUrl(s.id); });
+    marker.on("click", () => goToWrapped(s));
     markers.push(marker);
   });
 
@@ -129,12 +167,12 @@ function renderShortlist(stationList) {
 
 async function fetchNearest(lat, lon) {
   const resp = await fetch(`/api/stations/nearest?lat=${lat}&lon=${lon}`);
-  return resp.ok ? resp.json() : [];
+  return resp.ok ? cacheStations(await resp.json()) : [];
 }
 
 async function fetchSearch(q) {
   const resp = await fetch(`/api/stations/search?q=${encodeURIComponent(q)}`);
-  return resp.ok ? resp.json() : [];
+  return resp.ok ? cacheStations(await resp.json()) : [];
 }
 
 map.on("click", async (e) => {
@@ -178,6 +216,8 @@ searchInput.addEventListener("input", () => {
       const row = document.createElement("a");
       row.className = "station-row";
       row.href = wrappedUrl(s.id);
+      row.dataset.wrappedLink = "";
+      row.dataset.stationId = s.id;
       row.innerHTML = `
         <span class="station-row__name">${s.name}${s.state ? ", " + s.state : ""}</span>
         <span class="station-row__meta">${s.record_years} yrs (${s.first_year}–${s.last_year})</span>
