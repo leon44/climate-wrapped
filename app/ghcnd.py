@@ -11,7 +11,6 @@ GHCN-D encoding notes (see NOAA's readme.txt):
 
 import datetime
 import io
-import sys
 import time
 from pathlib import Path
 
@@ -19,12 +18,6 @@ import pandas as pd
 import requests
 
 from app.config import GHCND_CSV_URL, RAW_CACHE_DIR, RAW_CACHE_TTL_SECONDS
-
-
-def _trace(msg: str) -> None:
-    """Temporary tracing to isolate a prod SIGSEGV -- see app/routes.py's
-    _trace for why. Remove once the crash is isolated."""
-    print(f"[trace] {msg}", file=sys.stderr, flush=True)
 
 # Columns we actually need out of the ~120-column access CSV.
 _WANTED_RAW_COLUMNS = ["DATE", "TMAX", "TMIN", "PRCP", "AWND", "SNOW", "SNWD"]
@@ -52,9 +45,7 @@ def _is_cache_fresh(path: Path) -> bool:
 
 def _download_csv(station_id: str) -> str:
     url = GHCND_CSV_URL.format(station_id=station_id)
-    _trace(f"_download_csv({station_id}): requesting {url}")
     resp = requests.get(url, timeout=60)
-    _trace(f"_download_csv({station_id}): response status={resp.status_code}, bytes={len(resp.content)}")
     if resp.status_code == 404:
         raise StationFetchError(f"No GHCN-D record found for station {station_id}")
     resp.raise_for_status()
@@ -83,27 +74,20 @@ def fetch_raw_csv_text(station_id: str, force_refresh: bool = False) -> str:
 
 
 def _parse_csv(csv_text: str) -> pd.DataFrame:
-    _trace(f"_parse_csv: pd.read_csv on {len(csv_text)} chars")
     df = pd.read_csv(io.StringIO(csv_text), low_memory=False)
-    _trace(f"_parse_csv: read_csv done, shape={df.shape}")
     available = [c for c in _WANTED_RAW_COLUMNS if c in df.columns]
     df = df[available].copy()
 
-    _trace("_parse_csv: pd.to_datetime on DATE column")
     df["DATE"] = pd.to_datetime(df["DATE"])
-    _trace("_parse_csv: to_datetime done")
 
     for col, divisor in _TENTHS_COLUMNS.items():
         if col not in df.columns:
             continue
-        _trace(f"_parse_csv: coercing column {col}")
         df[col] = pd.to_numeric(df[col], errors="coerce")
         df.loc[df[col].isin(MISSING_SENTINELS), col] = pd.NA
         df[col] = df[col] / divisor
 
-    _trace("_parse_csv: sorting by DATE")
     df = df.sort_values("DATE").reset_index(drop=True)
-    _trace("_parse_csv: done")
     return df
 
 
@@ -111,9 +95,7 @@ def get_station_dataframe(station_id: str, force_refresh: bool = False) -> pd.Da
     """Full daily history for a station as a clean DataFrame with a DATE
     column plus whichever of TMAX/TMIN/PRCP/AWND/SNOW/SNWD the station
     reports, in real units (deg C, mm, m/s), NaN for missing days."""
-    _trace(f"get_station_dataframe({station_id}): fetching raw csv text")
     csv_text = fetch_raw_csv_text(station_id, force_refresh=force_refresh)
-    _trace(f"get_station_dataframe({station_id}): raw csv text ready, parsing")
     return _parse_csv(csv_text)
 
 

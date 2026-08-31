@@ -1,5 +1,11 @@
 Flask==3.0.3
 pandas==2.2.2
+# pandas 2.2.2 places no upper bound on numpy, so an unpinned build picks up
+# whatever numpy is newest -- pandas 2.2.2's compiled C extensions predate
+# numpy 2.0 by ~2 months and segfault on later numpy releases (observed:
+# pd.to_datetime SIGSEGV under numpy 2.4.6). Pin to the numpy 1.x range
+# pandas 2.2.2 actually shipped and was tested against.
+numpy<2.0,>=1.26.0
 requests==2.32.3
 gunicorn==22.0.0
 pytest==8.2.2

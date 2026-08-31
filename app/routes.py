@@ -1,6 +1,5 @@
 import datetime
 import json
-import sys
 
 from flask import Blueprint, abort, jsonify, render_template, request
 
@@ -11,14 +10,6 @@ from app.narrative import get_narrator
 from app.stats import compute_stats
 
 bp = Blueprint("main", __name__)
-
-
-def _trace(msg: str) -> None:
-    """Temporary step-by-step tracing to isolate a prod SIGSEGV -- a crashed
-    worker never gets to raise/log an exception, so the only way to tell
-    which step it died in is the last trace line gunicorn printed before the
-    "Worker was sent SIGSEGV!" line. Remove once the crash is isolated."""
-    print(f"[trace] {msg}", file=sys.stderr, flush=True)
 
 
 @bp.route("/")
@@ -72,16 +63,12 @@ PREVIEW_2025_DATE = datetime.date(2025, 9, 15)
 
 @bp.route("/wrapped/<station_id>")
 def wrapped(station_id):
-    _trace(f"wrapped({station_id}): start")
-
     station = stations.get_station(station_id)
     if not station:
         abort(404, f"Unknown station {station_id}")
-    _trace(f"wrapped({station_id}): station lookup ok ({station.get('name')})")
 
     preview_today = PREVIEW_2025_DATE if request.args.get("preview") == "2025" else None
     calendar_gate = gate.gate_status(preview_today)
-    _trace(f"wrapped({station_id}): calendar gate computed, is_open={calendar_gate['is_open']}")
     if not calendar_gate["is_open"]:
         print(
             f"[wrapped gate] {station_id} ({station.get('name')}) blocked: "
@@ -96,19 +83,15 @@ def wrapped(station_id):
     year = calendar_gate["summer_year"]
 
     cached = _load_cached_wrapped(station_id, year)
-    _trace(f"wrapped({station_id}): cache lookup done, hit={cached is not None}")
     if cached:
         return render_template("wrapped.html", station=station, cards=cached["cards"],
                                 stats=cached["stats"], year=year)
 
-    _trace(f"wrapped({station_id}): fetching/parsing station dataframe")
     try:
         df = ghcnd.get_station_dataframe(station_id)
     except StationFetchError:
         abort(502, f"Could not fetch data for station {station_id}")
-    _trace(f"wrapped({station_id}): dataframe ready, rows={len(df)}, columns={list(df.columns)}")
 
-    _trace(f"wrapped({station_id}): checking summer data completeness")
     if not gate.station_summer_data_complete(df, year):
         season = ghcnd.summer_slice(df, year)
         start, end = gate.summer_window(year)
@@ -126,17 +109,13 @@ def wrapped(station_id):
             "gate.html", station=station, gate=calendar_gate,
             reason="data_incomplete",
         )
-    _trace(f"wrapped({station_id}): summer data complete, computing stats")
 
     stats = compute_stats(df, year, station.get("lat"))
-    _trace(f"wrapped({station_id}): stats computed, building narrative cards")
     cards = get_narrator().build_cards(stats, station)
-    _trace(f"wrapped({station_id}): cards built, saving cache")
 
     _save_cached_wrapped(station_id, year, {
         "stats": stats, "cards": cards,
         "computed_at": datetime.datetime.utcnow().isoformat(),
     })
-    _trace(f"wrapped({station_id}): cache saved, rendering template")
 
     return render_template("wrapped.html", station=station, cards=cards, stats=stats, year=year)
