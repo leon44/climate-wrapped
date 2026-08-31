@@ -122,6 +122,27 @@ a { color: inherit; }
   color: var(--text);
 }
 
+.preview-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 999px;
+  border: 1px solid #2a2a35;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.preview-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 #map {
   flex: 1;
   min-height: 420px;
@@ -129,6 +150,46 @@ a { color: inherit; }
   border-radius: var(--radius);
   overflow: hidden;
   border: 1px solid #232330;
+}
+
+/* Station-count bubbles (leaflet.markercluster), retheme from the default
+   blue/yellow/orange to match the app's green/pink palette. */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+  background-color: rgba(30, 215, 96, 0.25);
+}
+
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+  background-color: rgba(30, 215, 96, 0.75);
+  color: #05130b;
+  font-weight: 700;
+}
+
+.marker-cluster-large {
+  background-color: rgba(255, 92, 138, 0.25);
+}
+
+.marker-cluster-large div {
+  background-color: rgba(255, 92, 138, 0.8);
+  color: #2a0413;
+}
+
+/* Individual station pins: a thermometer emoji instead of the default
+   Leaflet map pin, in a plain (unclipped) divIcon so the emoji shows at
+   full size without Leaflet's icon-image masking. */
+.station-thermo-icon {
+  font-size: 40px;
+  line-height: 1;
+  text-align: center;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
+
+.station-thermo-icon--highlight {
+  font-size: 48px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 6px rgba(255, 92, 138, 0.8));
 }
 
 .shortlist {
@@ -145,6 +206,35 @@ a { color: inherit; }
   border-radius: 12px;
   margin-bottom: 8px;
   border-bottom: none;
+}
+
+/* ---------------- Map popover ---------------- */
+
+.leaflet-container a.wrapped-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0a0a0f;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.leaflet-container a.wrapped-btn:hover {
+  background: #21e065;
+  transform: scale(1.03);
+  color: #0a0a0f;
+}
+
+.wrapped-btn__icon {
+  width: 11px;
+  height: 11px;
+  fill: #0a0a0f;
 }
 
 /* ---------------- Wrapped story ---------------- */
@@ -197,6 +287,59 @@ a { color: inherit; }
 .card__chart {
   width: min(560px, 90vw);
   margin-top: 28px;
+}
+
+.card__list {
+  width: min(420px, 90vw);
+  margin-top: 28px;
+  text-align: left;
+}
+
+.card__list-title {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 10px;
+}
+
+.card__list-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.card__list-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 15px;
+}
+
+.card__list-item:last-child { border-bottom: none; }
+
+.card__list-item--current {
+  background: rgba(255, 255, 255, 0.14);
+  font-weight: 700;
+}
+
+.card__list-rank {
+  width: 22px;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.card__list-label { flex: 1; }
+
+.card__list-value {
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
 }
 
 .card__scroll-hint {

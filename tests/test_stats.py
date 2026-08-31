@@ -1,27 +1,389 @@
-"""Sanity tests against two real GHCN-D stations chosen for contrast:
+"""Unit tests for each of the four stats.py functions against small,
+hand-computable synthetic DataFrames, plus smoke tests against two real
+GHCN-D stations chosen for contrast:
 
   - USW00094728 "NY CITY CNTRL PARK": ~155 year record, mid-latitude (40.8N).
   - CA002402351 "GRISE FIORD CLIMATE": ~18 year record, high Arctic (76.4N).
 
-These hit the network on first run (and cache to cache/raw/) unless a copy
-is already cached -- that's a deliberate v1 tradeoff to test against real
-data rather than fabricated fixtures. If NOAA is unreachable and nothing is
-cached, the test is skipped rather than failed.
+The real-station tests hit the network on first run (and cache to
+cache/raw/) unless a copy is already cached -- that's a deliberate v1
+tradeoff to test against real data rather than fabricated fixtures. If NOAA
+is unreachable and nothing is cached, the test is skipped rather than failed.
 """
 
+import datetime
 import json
 
+import pandas as pd
 import pytest
 
+import app.stats as stats_mod
 from app.ghcnd import StationFetchError, get_station_dataframe
 from app.narrative import get_narrator
 from app.ranking import rank_cards
-from app.stats import compute_stats
+from app.stats import (
+    compute_anomaly,
+    compute_hot_days_trend,
+    compute_hottest_nights,
+    compute_percentile_rank,
+    compute_stats,
+    summer_window,
+)
 from app.stations import get_station
 
 STATIONS = ["USW00094728", "CA002402351"]
-TEST_YEAR = 2025
+TEST_YEAR = 2025  # fully completed given today's date in this environment
+NORTH_LAT = 40.8
 
+
+# -- synthetic fixture helpers -----------------------------------------------
+
+def _summer_df(specs: dict) -> pd.DataFrame:
+    """specs: {year: {"TMAX": scalar-or-92-list, "TMIN": scalar-or-92-list}}.
+    Builds one row per Jun 1 - Aug 31 day for each year given."""
+    frames = []
+    for year, cols in specs.items():
+        dates = pd.date_range(f"{year}-06-01", f"{year}-08-31", freq="D")
+        assert len(dates) == 92
+        data = {"DATE": dates}
+        for col, vals in cols.items():
+            if not isinstance(vals, (list, tuple)):
+                vals = [vals] * 92
+            assert len(vals) == 92
+            data[col] = vals
+        frames.append(pd.DataFrame(data))
+    df = pd.concat(frames, ignore_index=True)
+    df["DATE"] = pd.to_datetime(df["DATE"])
+    return df.sort_values("DATE").reset_index(drop=True)
+
+
+def _tail(n_total, low, n_hot, hot):
+    return [low] * (n_total - n_hot) + [hot] * n_hot
+
+
+@pytest.fixture
+def lower_min_historical(monkeypatch):
+    """Small synthetic fixtures use 3 historical years, well under the
+    production MIN_HISTORICAL_SUMMERS=8 gate -- lower it so the unit tests
+    exercise the actual math instead of the insufficient_data path."""
+    monkeypatch.setattr(stats_mod, "MIN_HISTORICAL_SUMMERS", 3)
+
+
+# -- summer_window -------------------------------------------------------
+
+def test_summer_window_northern_hemisphere():
+    start, end = summer_window(2024, lat=40.8)
+    assert start == datetime.date(2024, 6, 1)
+    assert end == datetime.date(2024, 8, 31)
+
+
+def test_summer_window_southern_hemisphere():
+    start, end = summer_window(2024, lat=-33.9)
+    assert start == datetime.date(2023, 12, 1)
+    assert end == datetime.date(2024, 2, 29)  # 2024 is a leap year
+
+
+def test_summer_window_southern_hemisphere_non_leap_year():
+    start, end = summer_window(2023, lat=-33.9)
+    assert end == datetime.date(2023, 2, 28)
+
+
+# -- stat 1: compute_anomaly ----------------------------------------------
+
+def test_compute_anomaly_known_values(lower_min_historical):
+    df = _summer_df({
+        2020: {"TMAX": 20.0},
+        2021: {"TMAX": 20.0},
+        2022: {"TMAX": 20.0},
+        2023: {"TMAX": 25.0},
+    })
+    result = compute_anomaly(df, 2023, NORTH_LAT)
+    assert result == {
+        "anomaly_c": 5.0,
+        "current_mean_c": 25.0,
+        "baseline_mean_c": 20.0,
+        "baseline_years_used": 3,
+    }
+
+
+def test_compute_anomaly_insufficient_data_below_min_historical():
+    # only 2 historical summers, well under the default 8-summer minimum
+    df = _summer_df({
+        2022: {"TMAX": 20.0},
+        2023: {"TMAX": 20.0},
+        2024: {"TMAX": 25.0},
+    })
+    assert compute_anomaly(df, 2024, NORTH_LAT) == {"insufficient_data": True}
+
+
+def test_compute_anomaly_drops_summer_with_too_much_missing_data(lower_min_historical):
+    # 2021 has only 62/92 days of TMAX (~33% missing) -> excluded from history
+    sparse = [20.0] * 62 + [None] * 30
+    df = _summer_df({
+        2020: {"TMAX": 20.0},
+        2021: {"TMAX": sparse},
+        2022: {"TMAX": 20.0},
+        2023: {"TMAX": 30.0},
+    })
+    result = compute_anomaly(df, 2023, NORTH_LAT)
+    assert result == {"insufficient_data": True}  # only 2 qualifying historical summers left
+
+
+# -- stat 2: compute_hot_days_trend ----------------------------------------
+
+def test_compute_hot_days_trend_known_values(lower_min_historical):
+    df = _summer_df({
+        2020: {"TMAX": _tail(92, 20.0, 0, 35.0)},
+        2021: {"TMAX": _tail(92, 20.0, 2, 35.0)},
+        2022: {"TMAX": _tail(92, 20.0, 4, 35.0)},
+        2023: {"TMAX": _tail(92, 20.0, 7, 35.0)},
+    })
+    result = compute_hot_days_trend(df, 2023, NORTH_LAT)
+    assert result["threshold_c"] == 20.0
+    assert result["series"] == {2020: 0, 2021: 2, 2022: 4, 2023: 7}
+    assert result["current_summer_count"] == 7
+    assert result["historical_mean_count"] == 2.0
+    assert result["trend_days_per_decade"] == 23.0
+
+
+def test_compute_hot_days_trend_insufficient_data():
+    df = _summer_df({
+        2022: {"TMAX": 20.0},
+        2023: {"TMAX": 20.0},
+        2024: {"TMAX": 25.0},
+    })
+    assert compute_hot_days_trend(df, 2024, NORTH_LAT) == {"insufficient_data": True}
+
+
+# -- stat 3: compute_hottest_nights ----------------------------------------
+
+def test_compute_hottest_nights_known_values(lower_min_historical):
+    def build_year(n_hot, tmax_offset):
+        tmin = _tail(92, 10.0, n_hot, 22.0)
+        tmax = [t + tmax_offset for t in tmin]
+        return {"TMIN": tmin, "TMAX": tmax}
+
+    df = _summer_df({
+        2020: build_year(0, 10.0),
+        2021: build_year(2, 10.0),
+        2022: build_year(4, 10.0),
+        2023: build_year(7, 6.0),  # current summer: narrower diurnal range
+    })
+    result = compute_hottest_nights(df, 2023, NORTH_LAT)
+    assert result["night_threshold_c"] == 10.0
+    assert result["series"] == {2020: 0, 2021: 2, 2022: 4, 2023: 7}
+    assert result["current_summer_count"] == 7
+    assert result["historical_mean_count"] == 2.0
+    assert result["trend_nights_per_decade"] == 23.0
+    assert result["diurnal_range_current_c"] == 6.0
+    assert result["diurnal_range_baseline_c"] == 10.0
+
+
+def test_compute_hottest_nights_insufficient_data():
+    df = _summer_df({
+        2022: {"TMIN": 10.0, "TMAX": 20.0},
+        2023: {"TMIN": 10.0, "TMAX": 20.0},
+        2024: {"TMIN": 12.0, "TMAX": 22.0},
+    })
+    assert compute_hottest_nights(df, 2024, NORTH_LAT) == {"insufficient_data": True}
+
+
+# -- stat 4: compute_percentile_rank ---------------------------------------
+
+def test_compute_percentile_rank_known_values(lower_min_historical):
+    df = _summer_df({
+        2020: {"TMAX": 18.0},
+        2021: {"TMAX": 20.0},
+        2022: {"TMAX": 22.0},
+        2023: {"TMAX": 25.0},
+    })
+    result = compute_percentile_rank(df, 2023, NORTH_LAT)
+    assert result["percentile"] == 100
+    assert result["rank"] == 1
+    assert result["total_summers"] == 4
+    assert result["top_summers"] == [
+        {"rank": 1, "year": 2023, "mean_tmax_c": 25.0, "is_current_summer": True},
+        {"rank": 2, "year": 2022, "mean_tmax_c": 22.0, "is_current_summer": False},
+        {"rank": 3, "year": 2021, "mean_tmax_c": 20.0, "is_current_summer": False},
+        {"rank": 4, "year": 2020, "mean_tmax_c": 18.0, "is_current_summer": False},
+    ]
+
+
+def test_compute_percentile_rank_middle_of_pack(lower_min_historical):
+    df = _summer_df({
+        2020: {"TMAX": 18.0},
+        2021: {"TMAX": 20.0},
+        2022: {"TMAX": 24.0},
+        2023: {"TMAX": 22.0},  # warmer than 2 of 3 historical summers
+    })
+    result = compute_percentile_rank(df, 2023, NORTH_LAT)
+    assert result["percentile"] == round(100 * 2 / 3)
+    assert result["rank"] == 2  # 24.0 (2022) > 22.0 (2023) > 20.0 > 18.0
+    assert result["total_summers"] == 4
+    assert [item["year"] for item in result["top_summers"]] == [2022, 2023, 2021, 2020]
+    assert result["top_summers"][1]["is_current_summer"] is True
+
+
+def test_compute_percentile_rank_insufficient_data():
+    df = _summer_df({
+        2022: {"TMAX": 20.0},
+        2023: {"TMAX": 20.0},
+        2024: {"TMAX": 25.0},
+    })
+    assert compute_percentile_rank(df, 2024, NORTH_LAT) == {"insufficient_data": True}
+
+
+def test_compute_percentile_rank_top_summers_capped_at_5(lower_min_historical):
+    df = _summer_df({y: {"TMAX": float(y - 2000)} for y in range(2010, 2018)})  # 2010..2017, current=2017
+    result = compute_percentile_rank(df, 2017, NORTH_LAT)
+    assert len(result["top_summers"]) == 5
+    assert [item["year"] for item in result["top_summers"]] == [2017, 2016, 2015, 2014, 2013]
+    assert [item["rank"] for item in result["top_summers"]] == [1, 2, 3, 4, 5]
+
+
+# -- compute_stats orchestrator ---------------------------------------------
+
+def test_compute_stats_all_insufficient_below_min_historical():
+    """Fewer than the default 8 qualifying historical summers -> every
+    stat block flags insufficient_data rather than returning a number
+    computed from a tiny sample."""
+    df = _summer_df({y: {"TMAX": 20.0, "TMIN": 10.0} for y in range(2020, 2025)})
+    result = compute_stats(df, 2024, NORTH_LAT)
+    for key in ("anomaly", "hot_days_trend", "hottest_nights", "percentile_rank"):
+        assert result[key] == {"insufficient_data": True}
+
+
+def test_compute_stats_no_tmax_column():
+    df = pd.DataFrame({"DATE": pd.date_range("2024-06-01", "2024-08-31")})
+    result = compute_stats(df, 2024, NORTH_LAT)
+    for key in ("anomaly", "hot_days_trend", "hottest_nights", "percentile_rank"):
+        assert result[key] == {"insufficient_data": True}
+
+
+def test_compute_stats_is_json_serializable_with_full_synthetic_history(lower_min_historical):
+    def build_year(n_hot):
+        tmin = _tail(92, 10.0, n_hot, 22.0)
+        tmax = [t + 10.0 for t in tmin]
+        return {"TMIN": tmin, "TMAX": tmax}
+
+    specs = {y: build_year(y - 2020) for y in range(2020, 2024)}  # 2020..2023
+    df = _summer_df(specs)
+    stats = compute_stats(df, 2023, NORTH_LAT)
+    assert stats["summer_year"] == 2023
+    json.dumps(stats)  # raises on numpy/pandas leakage or non-str-coercible keys
+
+
+def test_compute_stats_southern_hemisphere(lower_min_historical):
+    """Southern Hemisphere station: summer N spans Dec (N-1) - Feb (N)."""
+    frames = []
+    for label_year, tmax in ((2021, 15.0), (2022, 15.0), (2023, 15.0), (2024, 20.0)):
+        start = datetime.date(label_year - 1, 12, 1)
+        end = datetime.date(label_year, 2, 28 if not _is_leap(label_year) else 29)
+        dates = pd.date_range(start, end, freq="D")
+        frames.append(pd.DataFrame({"DATE": dates, "TMAX": tmax}))
+    df = pd.concat(frames, ignore_index=True)
+    df["DATE"] = pd.to_datetime(df["DATE"])
+
+    result = compute_anomaly(df, 2024, lat=-33.9)
+    assert result["current_mean_c"] == 20.0
+    assert result["baseline_mean_c"] == 15.0
+    assert result["anomaly_c"] == 5.0
+
+
+def _is_leap(year):
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+# -- narrative / ranking integration ----------------------------------------
+
+def test_ranking_and_narrative_on_full_synthetic_history(lower_min_historical):
+    def build_year(n_hot):
+        tmin = _tail(92, 10.0, n_hot, 22.0)
+        tmax = [t + 10.0 for t in tmin]
+        return {"TMIN": tmin, "TMAX": tmax}
+
+    specs = {y: build_year(max(0, y - 2020)) for y in range(2020, 2024)}
+    df = _summer_df(specs)
+    stats = compute_stats(df, 2023, NORTH_LAT)
+
+    ranked = rank_cards(stats)
+    assert ranked[0]["id"] == "anomaly"  # always leads as the headline number
+    scores = [c["score"] for c in ranked]
+    assert scores == sorted(scores, reverse=True)
+
+    station = {"name": "Test Station", "first_year": 2020}
+    cards = get_narrator().build_cards(stats, station)
+    assert cards[0]["id"] == "intro"
+    assert cards[-1]["id"] == "outro"
+    for card in cards:
+        assert card["headline"]
+        assert card["sentence"]
+    json.dumps(cards)
+
+    percentile_card = next(c for c in cards if c["id"] == "percentile_rank")
+    assert percentile_card["list"]["title"]
+    rows = percentile_card["list"]["rows"]
+    assert 1 <= len(rows) <= 5
+    assert [row["rank"] for row in rows] == list(range(1, len(rows) + 1))
+    assert sum(row["is_current_summer"] for row in rows) == 1
+
+
+def test_narrative_skips_insufficient_data_stats():
+    df = _summer_df({y: {"TMAX": 20.0, "TMIN": 10.0} for y in range(2020, 2025)})
+    stats = compute_stats(df, 2024, NORTH_LAT)
+    station = {"name": "Test Station", "first_year": 2020}
+    cards = get_narrator().build_cards(stats, station)
+    # nothing but intro/outro should be built when every stat is insufficient
+    assert [c["id"] for c in cards] == ["intro", "outro"]
+
+
+def test_narrative_calls_it_warm_below_20c(lower_min_historical):
+    """A cool station's 95th-percentile threshold can land under 20°C --
+    cards should say "warm", not "hot", for both the day and night stats."""
+    def build_year(n_hot):
+        tmin = _tail(92, 5.0, n_hot, 12.0)
+        tmax = [t + 8.0 for t in tmin]  # base TMAX 13.0, hot-tail TMAX 20.0 -> threshold < 20
+        return {"TMIN": tmin, "TMAX": tmax}
+
+    specs = {y: build_year(max(0, y - 2020)) for y in range(2020, 2024)}
+    df = _summer_df(specs)
+    stats = compute_stats(df, 2023, NORTH_LAT)
+
+    assert stats["hot_days_trend"]["threshold_c"] < 20
+    assert stats["hottest_nights"]["night_threshold_c"] < 20
+
+    station = {"name": "Test Station", "first_year": 2020}
+    cards = get_narrator().build_cards(stats, station)
+    by_id = {c["id"]: c for c in cards}
+
+    assert "warm days" in by_id["hot_days_trend"]["headline"]
+    assert "warm-day bar" in by_id["hot_days_trend"]["sentence"]
+    assert "warm nights" in by_id["hottest_nights"]["headline"]
+
+
+def test_narrative_calls_it_hot_at_or_above_20c(lower_min_historical):
+    def build_year(n_hot):
+        tmin = _tail(92, 21.0, n_hot, 30.0)  # base TMIN 21.0 -> night threshold >= 20
+        tmax = [t + 10.0 for t in tmin]  # base TMAX 31.0 -> day threshold >= 20
+        return {"TMIN": tmin, "TMAX": tmax}
+
+    specs = {y: build_year(max(0, y - 2020)) for y in range(2020, 2024)}
+    df = _summer_df(specs)
+    stats = compute_stats(df, 2023, NORTH_LAT)
+
+    assert stats["hot_days_trend"]["threshold_c"] >= 20
+    assert stats["hottest_nights"]["night_threshold_c"] >= 20
+
+    station = {"name": "Test Station", "first_year": 2020}
+    cards = get_narrator().build_cards(stats, station)
+    by_id = {c["id"]: c for c in cards}
+
+    assert "hot days" in by_id["hot_days_trend"]["headline"]
+    assert "hot-day bar" in by_id["hot_days_trend"]["sentence"]
+    assert "hot nights" in by_id["hottest_nights"]["headline"]
+
+
+# -- real-station smoke tests -----------------------------------------------
 
 @pytest.fixture(scope="module", params=STATIONS)
 def station_df(request):
@@ -41,68 +403,34 @@ def test_dataframe_has_core_columns(station_df):
     assert df["TMAX"].dropna().between(-90, 60).all()
 
 
-def test_compute_stats_shape(station_df):
+def test_compute_stats_smoke_against_real_station(station_df):
     station_id, df = station_df
-    stats = compute_stats(df, TEST_YEAR)
+    station = get_station(station_id)
+    stats = compute_stats(df, TEST_YEAR, station["lat"])
 
     assert stats["summer_year"] == TEST_YEAR
-    assert "TMAX" in stats["elements_present"]
-    assert stats["n_summers_on_record"] >= 2
-
-    mt = stats["mean_temp"]
-    assert 1 <= mt["rank"] <= mt["n_summers"]
-    assert 0 <= mt["percentile"] <= 100
-
-    hd = stats["hottest_day"]
-    assert hd["date"].startswith(str(TEST_YEAR))
-    assert hd["all_time_rank"] >= 1
-
-    for key in ("days_ge_28c", "days_ge_30c", "days_ge_35c"):
-        assert stats["hot_day_counts"][key]["this_year"] >= 0
-
-    assert stats["heatwave"]["this_year_days"] >= 0
-    assert stats["heatwave"]["record_days"] >= stats["heatwave"]["this_year_days"] \
-        or stats["heatwave"]["is_record"]
-
-    top10 = stats["top_hottest_summers"]
-    assert len(top10) <= 10
-    assert [c["rank"] for c in top10] == list(range(1, len(top10) + 1))
-    # descending mean temp
-    temps = [c["mean_temp_c"] for c in top10]
-    assert temps == sorted(temps, reverse=True)
-
-
-def test_compute_stats_is_json_serializable(station_df):
-    _, df = station_df
-    stats = compute_stats(df, TEST_YEAR)
     json.dumps(stats)  # raises on numpy/pandas leakage
 
+    for key in ("anomaly", "hot_days_trend", "hottest_nights", "percentile_rank"):
+        block = stats[key]
+        assert isinstance(block, dict)
+        if block.get("insufficient_data"):
+            continue  # e.g. a short or gappy record may fall short of the 8-summer minimum
+        if key == "anomaly":
+            assert isinstance(block["anomaly_c"], float)
+            assert 1 <= block["baseline_years_used"] <= 30
+        elif key in ("hot_days_trend", "hottest_nights"):
+            assert block["current_summer_count"] >= 0
+            assert len(block["series"]) >= 1
+        elif key == "percentile_rank":
+            assert 0 <= block["percentile"] <= 100
+            assert 1 <= block["rank"] <= block["total_summers"]
 
-def test_missing_elements_are_omitted_not_faked(station_df):
-    """A station with no PRCP data for a given summer should simply not
-    have rainfall keys, rather than reporting a fabricated zero."""
+
+def test_narrative_cards_from_real_station(station_df):
     station_id, df = station_df
-    stats = compute_stats(df, TEST_YEAR)
-    if "PRCP" not in df.columns or df["PRCP"].notna().sum() == 0:
-        assert "rainfall_total" not in stats
-        assert "wettest_day" not in stats
-
-
-def test_ranking_orders_by_significance(station_df):
-    _, df = station_df
-    stats = compute_stats(df, TEST_YEAR)
-    ranked = rank_cards(stats)
-    scores = [c["score"] for c in ranked]
-    assert scores == sorted(scores, reverse=True)
-    assert set(c["id"] for c in ranked) == {
-        k for k in stats if k not in ("summer_year", "elements_present", "n_summers_on_record")
-    }
-
-
-def test_narrative_cards_reference_only_computed_numbers(station_df):
-    station_id, df = station_df
-    stats = compute_stats(df, TEST_YEAR)
     station = get_station(station_id)
+    stats = compute_stats(df, TEST_YEAR, station["lat"])
     cards = get_narrator().build_cards(stats, station)
 
     assert cards[0]["id"] == "intro"
@@ -111,16 +439,3 @@ def test_narrative_cards_reference_only_computed_numbers(station_df):
         assert card["headline"]
         assert card["sentence"]
     json.dumps(cards)
-
-
-def test_contrasting_stations_both_produce_a_mean_temp_card():
-    """The whole point of picking these two stations: a 155-year mid-latitude
-    record and an 18-year Arctic record should both still produce a usable
-    core stat, even though most of their other numbers look nothing alike."""
-    for station_id in STATIONS:
-        try:
-            df = get_station_dataframe(station_id)
-        except (StationFetchError, Exception) as e:
-            pytest.skip(f"could not fetch {station_id}: {e}")
-        stats = compute_stats(df, TEST_YEAR)
-        assert stats.get("mean_temp") is not None, station_id

@@ -20,7 +20,7 @@ from app.config import (
 )
 from app.ghcnd import summer_slice
 
-MIN_DAY_COVERAGE = 0.9  # fraction of the 92 summer days that must have data
+MIN_DAY_COVERAGE = 0.75  # fraction of the 92 summer days that must have data
 
 
 def _real_or_fake_today() -> datetime.date:

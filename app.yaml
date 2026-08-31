@@ -21,11 +21,5 @@ services:
     envs:
       - key: GATE_REPORTING_LAG_DAYS
         value: "5"
-      # TESTING ONLY: pins the wrapped gate to summer 2025 so we can preview
-      # the feature before summer 2026 finishes. Remove this env var (or set
-      # it to a real date/blank) before sharing publicly, so the gate falls
-      # back to the real current year -- see FAKE_TODAY in app/config.py.
-      - key: FAKE_TODAY
-        value: "2025-09-15"
     routes:
       - path: /

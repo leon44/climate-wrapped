@@ -14,14 +14,17 @@ cards.forEach((card) => {
   const canvas = document.getElementById(`chart-${card.id}`);
   if (!canvas) return;
 
-  // These are all narrow-range series (e.g. summer means clustered within a
-  // couple of degrees) -- a zero baseline would flatten the trend to a
-  // barely-visible sliver, so scale to the data's own range instead of
-  // Chart.js's default beginAtZero.
   const values = card.chart.data.filter((v) => v !== null && v !== undefined);
   const dataMin = Math.min(...values);
   const dataMax = Math.max(...values);
   const pad = Math.max((dataMax - dataMin) * 0.25, 0.5);
+
+  // Bar charts here are day/night counts -- always start the axis at zero
+  // so bar heights stay comparable and never imply a negative count. Line
+  // charts (unused today, kept for future stat types) are narrow-range
+  // series where a zero baseline would flatten the trend to a barely-visible
+  // sliver, so those still scale to the data's own range.
+  const yMin = card.chart.type === "bar" ? 0 : Math.floor(dataMin - pad);
 
   new Chart(canvas, {
     type: card.chart.type,
@@ -47,7 +50,7 @@ cards.forEach((card) => {
         x: { grid: { display: false } },
         y: {
           grid: { color: CHART_DEFAULTS.gridColor },
-          min: Math.floor(dataMin - pad),
+          min: yMin,
           max: Math.ceil(dataMax + pad),
         },
       },

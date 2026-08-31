@@ -28,6 +28,15 @@ from app.ranking import rank_cards
 
 _ORDINAL_SUFFIXES = {1: "st", 2: "nd", 3: "rd"}
 
+# Below this, a station's 95th-percentile threshold reads as "warm" rather
+# than "hot" -- e.g. a station whose hot-day bar is 18°C shouldn't have cards
+# calling an 18°C day "hot".
+HOT_LABEL_THRESHOLD_C = 20
+
+
+def _hot_or_warm(threshold_c: float) -> str:
+    return "hot" if threshold_c >= HOT_LABEL_THRESHOLD_C else "warm"
+
 
 def _ordinal(n: int) -> str:
     if 11 <= (n % 100) <= 13:
@@ -63,17 +72,10 @@ class TemplateNarrator(Narrator):
         cards = [self._intro_card(stats, station)]
 
         builders = {
-            "mean_temp": self._mean_temp_card,
-            "hottest_day": self._hottest_day_card,
-            "hot_day_counts": self._hot_day_counts_card,
-            "heatwave": self._heatwave_card,
-            "rainfall_total": self._rainfall_card,
-            "wettest_day": self._wettest_day_card,
-            "dry_spell": self._dry_spell_card,
-            "top_hottest_summers": self._top_summers_card,
-            "decade_trend": self._decade_trend_card,
-            "frost_day_trend": self._frost_trend_card,
-            "diurnal_range_trend": self._diurnal_trend_card,
+            "anomaly": self._anomaly_card,
+            "hot_days_trend": self._hot_days_trend_card,
+            "hottest_nights": self._hottest_nights_card,
+            "percentile_rank": self._percentile_rank_card,
         }
 
         for entry in rank_cards(stats):
@@ -96,174 +98,95 @@ class TemplateNarrator(Narrator):
                         f"{station.get('first_year', '—')}. Here's how this summer measured up.",
         }
 
-    def _mean_temp_card(self, block, stats, station):
-        rank_word = _ordinal(block["rank"])
+    def _anomaly_card(self, block, stats, station):
+        direction = "warmer" if block["anomaly_c"] >= 0 else "cooler"
         return {
-            "id": "mean_temp", "kind": "stat",
-            "headline": _c(block["this_year_mean_c"], 1),
+            "id": "anomaly", "kind": "stat",
+            "headline": f"{block['anomaly_c']:+.1f}°C",
             "sentence": (
-                f"This was the {rank_word} hottest summer here since "
-                f"{block['first_year']} out of {block['n_summers']} on record — "
-                f"hotter than {block['percentile']:.0f}% of them. The long-term "
-                f"average is {_c(block['long_term_mean_c'], 1)}."
+                f"This summer averaged {_c(block['current_mean_c'], 1)} — "
+                f"{abs(block['anomaly_c']):.1f}°C {direction} than the "
+                f"{block['baseline_years_used']}-year average of "
+                f"{_c(block['baseline_mean_c'], 1)}."
             ),
             "stats": block,
         }
 
-    def _hottest_day_card(self, block, stats, station):
-        rank_word = _ordinal(block["all_time_rank"]) if block["all_time_rank"] else "—"
+    def _hot_days_trend_card(self, block, stats, station):
+        direction = "more" if block["trend_days_per_decade"] > 0 else "fewer"
+        label = _hot_or_warm(block["threshold_c"])
+        years = sorted(block["series"].keys())
         return {
-            "id": "hottest_day", "kind": "stat",
-            "headline": _c(block["tmax_c"], 1),
+            "id": "hot_days_trend", "kind": "trend",
+            "headline": f"{block['current_summer_count']} {label} days",
             "sentence": (
-                f"The hottest day this summer hit {_c(block['tmax_c'], 1)} on "
-                f"{_fmt_date(block['date'])} — the {rank_word} hottest day out of "
-                f"{block['all_time_n_days']} in the full record. The all-time "
-                f"record is {_c(block['all_time_hottest_c'], 1)}."
-            ),
-            "stats": block,
-        }
-
-    def _hot_day_counts_card(self, block, stats, station):
-        parts = []
-        for key, v in block.items():
-            t = key.replace("days_ge_", "").replace("c", "")
-            avg = f"{v['long_term_avg']:.1f}" if v["long_term_avg"] is not None else "n/a"
-            parts.append(f"{v['this_year']} days ≥{t}°C (avg {avg})")
-        return {
-            "id": "hot_day_counts", "kind": "stat",
-            "headline": " / ".join(str(v["this_year"]) for v in block.values()),
-            "sentence": "Hot days this summer: " + "; ".join(parts) + ".",
-            "stats": block,
-        }
-
-    def _heatwave_card(self, block, stats, station):
-        record_note = (
-            "That ties/breaks the station's record." if block["is_record"]
-            else f"The record is {block['record_days']} days, set in {block['record_year']}."
-        )
-        return {
-            "id": "heatwave", "kind": "stat",
-            "headline": f"{block['this_year_days']} days",
-            "sentence": (
-                f"The longest heatwave this summer (consecutive days ≥"
-                f"{block['threshold_c']:.0f}°C) ran {block['this_year_days']} days. "
-                f"{record_note}"
-            ),
-            "stats": block,
-        }
-
-    def _rainfall_card(self, block, stats, station):
-        rank_word = _ordinal(block["rank"])
-        return {
-            "id": "rainfall_total", "kind": "stat",
-            "headline": f"{block['this_year_mm']:.0f} mm",
-            "sentence": (
-                f"{block['this_year_mm']:.0f} mm of rain fell this summer — the "
-                f"{rank_word} wettest of {block['n_summers']} summers on record "
-                f"(average is {block['long_term_avg_mm']:.0f} mm)."
-            ),
-            "stats": block,
-        }
-
-    def _wettest_day_card(self, block, stats, station):
-        rank_word = _ordinal(block["all_time_rank"]) if block["all_time_rank"] else "—"
-        return {
-            "id": "wettest_day", "kind": "stat",
-            "headline": f"{block['prcp_mm']:.0f} mm",
-            "sentence": (
-                f"The wettest day this summer brought {block['prcp_mm']:.0f} mm on "
-                f"{_fmt_date(block['date'])} — the {rank_word} wettest day out of "
-                f"{block['all_time_n_days']} on record."
-            ),
-            "stats": block,
-        }
-
-    def _dry_spell_card(self, block, stats, station):
-        record_note = (
-            "That ties/breaks the station's record." if block["is_record"]
-            else f"The record is {block['record_days']} days, set in {block['record_year']}."
-        )
-        return {
-            "id": "dry_spell", "kind": "stat",
-            "headline": f"{block['this_year_days']} days",
-            "sentence": (
-                f"The longest dry spell this summer ran {block['this_year_days']} "
-                f"consecutive days without meaningful rain. {record_note}"
-            ),
-            "stats": block,
-        }
-
-    def _top_summers_card(self, block, stats, station):
-        recent = sum(1 for s in block if s["is_recent"])
-        top = block[0]
-        return {
-            "id": "top_hottest_summers", "kind": "list",
-            "headline": "Top 10 hottest summers",
-            "sentence": (
-                f"{recent} of the top 10 hottest summers on record here have "
-                f"happened in the last 15 years. The hottest was {top['year']} "
-                f"at {_c(top['mean_temp_c'], 1)}."
+                f"{block['current_summer_count']} days topped {_c(block['threshold_c'])} "
+                f"this summer — your station's {label}-day bar — versus a historical "
+                f"average of {block['historical_mean_count']:.1f}. That's trending "
+                f"toward {abs(block['trend_days_per_decade']):.1f} {direction} days "
+                f"per decade."
             ),
             "chart": {
                 "type": "bar",
-                "labels": [str(s["year"]) for s in block],
-                "data": [s["mean_temp_c"] for s in block],
+                "labels": [str(y) for y in years],
+                "data": [block["series"][y] for y in years],
             },
             "stats": block,
         }
 
-    def _decade_trend_card(self, block, stats, station):
-        first, last = block[0], block[-1]
-        delta = last["mean_temp_c"] - first["mean_temp_c"]
-        direction = "up" if delta > 0 else "down"
+    def _hottest_nights_card(self, block, stats, station):
+        direction = "more" if block["trend_nights_per_decade"] > 0 else "fewer"
+        label = _hot_or_warm(block["night_threshold_c"])
+        years = sorted(block["series"].keys())
+        sentence = (
+            f"{block['current_summer_count']} nights stayed above "
+            f"{_c(block['night_threshold_c'])} this summer, versus a historical "
+            f"average of {block['historical_mean_count']:.1f} — trending toward "
+            f"{abs(block['trend_nights_per_decade']):.1f} {direction} nights per decade."
+        )
+        if block["diurnal_range_current_c"] is not None and block["diurnal_range_baseline_c"] is not None:
+            narrow_direction = (
+                "narrower" if block["diurnal_range_current_c"] < block["diurnal_range_baseline_c"]
+                else "wider"
+            )
+            sentence += (
+                f" The gap between daily highs and lows was {narrow_direction} too: "
+                f"{_c(block['diurnal_range_current_c'], 1)} this summer versus "
+                f"{_c(block['diurnal_range_baseline_c'], 1)} historically."
+            )
         return {
-            "id": "decade_trend", "kind": "trend",
-            "headline": f"{delta:+.1f}°C",
-            "sentence": (
-                f"Decade by decade, mean summer temperature has moved {direction} "
-                f"{abs(delta):.1f}°C, from {_c(first['mean_temp_c'], 1)} in the "
-                f"{first['decade']}s to {_c(last['mean_temp_c'], 1)} in the {last['decade']}s."
-            ),
+            "id": "hottest_nights", "kind": "trend",
+            "headline": f"{block['current_summer_count']} {label} nights",
+            "sentence": sentence,
             "chart": {
-                "type": "line",
-                "labels": [f"{b['decade']}s" for b in block],
-                "data": [b["mean_temp_c"] for b in block],
+                "type": "bar",
+                "labels": [str(y) for y in years],
+                "data": [block["series"][y] for y in years],
             },
             "stats": block,
         }
 
-    def _frost_trend_card(self, block, stats, station):
-        direction = "fewer" if block["slope_days_per_year"] < 0 else "more"
+    def _percentile_rank_card(self, block, stats, station):
+        rank_word = _ordinal(block["rank"])
+        top_list = [
+            {
+                "rank": item["rank"],
+                "label": str(item["year"]),
+                "value": _c(item["mean_tmax_c"], 1),
+                "is_current_summer": item["is_current_summer"],
+            }
+            for item in block["top_summers"]
+        ]
         return {
-            "id": "frost_day_trend", "kind": "trend",
-            "headline": f"{block['slope_days_per_year']:+.2f} days/yr",
+            "id": "percentile_rank", "kind": "stat",
+            "headline": f"{rank_word} hottest",
             "sentence": (
-                f"Frost days (TMIN below 0°C) have trended toward {direction} "
-                f"per year across the full record, roughly "
-                f"{abs(block['slope_days_per_year']):.2f} days/year."
+                f"This was the {rank_word} hottest summer of {block['total_summers']} "
+                f"on record here — hotter than {block['percentile']}% of them."
             ),
-            "chart": {
-                "type": "line",
-                "labels": [f"{b['decade']}s" for b in block["by_decade"]],
-                "data": [b["avg_frost_days"] for b in block["by_decade"]],
-            },
-            "stats": block,
-        }
-
-    def _diurnal_trend_card(self, block, stats, station):
-        direction = "narrowed" if block["slope_c_per_year"] < 0 else "widened"
-        return {
-            "id": "diurnal_range_trend", "kind": "trend",
-            "headline": f"{block['slope_c_per_year']:+.3f}°C/yr",
-            "sentence": (
-                f"The gap between daily highs and lows has {direction} over the "
-                f"full record, a trend of about {abs(block['slope_c_per_year']):.3f}°C/year."
-            ),
-            "chart": {
-                "type": "line",
-                "labels": [f"{b['decade']}s" for b in block["by_decade"]],
-                "data": [b["avg_range_c"] for b in block["by_decade"]],
+            "list": {
+                "title": "Top 5 hottest summers on record",
+                "rows": top_list,
             },
             "stats": block,
         }

@@ -23,6 +23,11 @@ def api_search():
     return jsonify(stations.search_stations(q, limit=10))
 
 
+@bp.route("/api/stations/all")
+def api_all_stations():
+    return jsonify(stations.all_stations_geo())
+
+
 @bp.route("/api/stations/nearest")
 def api_nearest():
     try:
@@ -49,14 +54,27 @@ def _save_cached_wrapped(station_id: str, year: int, payload: dict) -> None:
     _stats_cache_path(station_id, year).write_text(json.dumps(payload), encoding="utf-8")
 
 
+#: Fixed date used by the "2025" preview checkbox on the landing page --
+#: lets you demo the wrapped story on a real deploy before this year's
+#: summer-completion gate has opened, without a permanent FAKE_TODAY env
+#: var (see app/config.py) forcing that date for every visitor.
+PREVIEW_2025_DATE = datetime.date(2025, 9, 15)
+
+
 @bp.route("/wrapped/<station_id>")
 def wrapped(station_id):
     station = stations.get_station(station_id)
     if not station:
         abort(404, f"Unknown station {station_id}")
 
-    calendar_gate = gate.gate_status()
+    preview_today = PREVIEW_2025_DATE if request.args.get("preview") == "2025" else None
+    calendar_gate = gate.gate_status(preview_today)
     if not calendar_gate["is_open"]:
+        print(
+            f"[wrapped gate] {station_id} ({station.get('name')}) blocked: "
+            f"calendar gate not open yet -- today={calendar_gate['today']}, "
+            f"opens_on={calendar_gate['opens_on']}"
+        )
         return render_template(
             "gate.html", station=station, gate=calendar_gate,
             reason="calendar",
@@ -75,12 +93,24 @@ def wrapped(station_id):
         abort(502, f"Could not fetch data for station {station_id}")
 
     if not gate.station_summer_data_complete(df, year):
+        season = ghcnd.summer_slice(df, year)
+        start, end = gate.summer_window(year)
+        days_in_summer = (end - start).days + 1
+        coverage = {
+            col: round(season[col].notna().sum() / days_in_summer, 3)
+            for col in ("TMAX", "TMIN") if col in season.columns
+        }
+        print(
+            f"[wrapped gate] {station_id} ({station.get('name')}) blocked: "
+            f"summer {year} data incomplete -- coverage={coverage} "
+            f"(need >= {gate.MIN_DAY_COVERAGE} for each of TMAX/TMIN)"
+        )
         return render_template(
             "gate.html", station=station, gate=calendar_gate,
             reason="data_incomplete",
         )
 
-    stats = compute_stats(df, year)
+    stats = compute_stats(df, year, station.get("lat"))
     cards = get_narrator().build_cards(stats, station)
 
     _save_cached_wrapped(station_id, year, {

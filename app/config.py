@@ -35,8 +35,6 @@ MAX_YEARS_SINCE_LAST_REPORT = 1
 # trust a station's summer data as "fully present".
 GATE_REPORTING_LAG_DAYS = int(os.environ.get("GATE_REPORTING_LAG_DAYS", 5))
 
-HOT_DAY_THRESHOLDS_C = (28, 30, 35)
-
 # Testing/dev-only override: set FAKE_TODAY=YYYY-MM-DD to make the gate
 # (app/gate.py) believe it's that date instead of the real one, so you can
 # preview the wrapped story before the actual summer-completion gate opens.

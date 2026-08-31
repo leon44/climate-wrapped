@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Summer Wrapped</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
@@ -20,6 +22,10 @@
         <div id="search-results" class="search-results"></div>
       </div>
       <button id="locate-btn" class="btn btn--ghost">📍 Use my location</button>
+      <label class="preview-toggle" for="preview-2025-checkbox">
+        <input type="checkbox" id="preview-2025-checkbox">
+        2025
+      </label>
     </div>
 
     <div id="map" data-stadia-key="{{ stadia_api_key }}"></div>
@@ -31,6 +37,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="{{ url_for('static', filename='js/map.js') }}"></script>
 </body>
 </html>

@@ -16,6 +16,20 @@
       {% if card.chart %}
         <div class="card__chart"><canvas id="chart-{{ card.id }}"></canvas></div>
       {% endif %}
+      {% if card.list %}
+        <div class="card__list">
+          <div class="card__list-title">{{ card.list.title }}</div>
+          <ol class="card__list-items">
+            {% for item in card.list.rows %}
+            <li class="card__list-item{% if item.is_current_summer %} card__list-item--current{% endif %}">
+              <span class="card__list-rank">{{ item.rank }}</span>
+              <span class="card__list-label">{{ item.label }}</span>
+              <span class="card__list-value">{{ item.value }}</span>
+            </li>
+            {% endfor %}
+          </ol>
+        </div>
+      {% endif %}
       {% if not loop.last %}<div class="card__scroll-hint">scroll ↓</div>{% endif %}
       {% if loop.last %}<a href="/" class="btn" style="margin-top:24px">Wrap another station</a>{% endif %}
     </section>
