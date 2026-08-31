@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Summer Wrapped</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="landing">
+    <div class="landing__header">
+      <h1>Summer Wrapped</h1>
+      <p>Pick a weather station and see how this summer compares to its full climate record.</p>
+    </div>
+
+    <div class="controls">
+      <div class="search-box">
+        <input id="search-input" type="text" placeholder="Search by station name or state…" autocomplete="off">
+        <div id="search-results" class="search-results"></div>
+      </div>
+      <button id="locate-btn" class="btn btn--ghost">📍 Use my location</button>
+    </div>
+
+    <div id="map" data-stadia-key="{{ stadia_api_key }}"></div>
+
+    <div id="shortlist" class="shortlist" style="display:none">
+      <h2>Nearest stations — pick one</h2>
+      <div id="shortlist-rows"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="{{ url_for('static', filename='js/map.js') }}"></script>
+</body>
+</html>

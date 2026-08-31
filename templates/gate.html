@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Summer Wrapped — {{ station.name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="gate">
+    <div class="gate__inner">
+      {% if reason == "data_incomplete" %}
+        <h1>Almost there 🌤️</h1>
+        <p>
+          Summer {{ gate.summer_year }} has technically ended, but
+          <strong>{{ station.name }}</strong> hasn't fully published its data
+          for that period yet. NOAA's pipeline can lag a few days behind —
+          check back soon.
+        </p>
+      {% else %}
+        <h1>Come back after summer ends 🌻</h1>
+        <p>
+          Summer {{ gate.summer_year }} (Jun 1 – Aug 31) for
+          <strong>{{ station.name }}</strong> isn't over yet, so there's no
+          complete story to tell. Your wrapped unlocks on
+          <strong>{{ gate.opens_on }}</strong>.
+        </p>
+      {% endif %}
+      <a href="/" class="btn">Pick another station</a>
+    </div>
+  </div>
+</body>
+</html>

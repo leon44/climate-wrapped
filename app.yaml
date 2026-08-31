@@ -1,0 +1,25 @@
+# DigitalOcean App Platform spec. Deploy with:
+#   doctl apps create --spec app.yaml
+# or connect the repo through the DO dashboard and it'll detect this file.
+#
+# Update `github.repo` (and branch, if not main) to your fork before deploying.
+name: summer-wrapped
+region: nyc
+services:
+  - name: web
+    github:
+      repo: your-github-username/ClimateWrapped
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    build_command: pip install -r requirements.txt
+    run_command: gunicorn run:app --workers 2 --threads 4 --timeout 60 --bind 0.0.0.0:$PORT
+    environment_slug: python
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    http_port: 8080
+    envs:
+      - key: GATE_REPORTING_LAG_DAYS
+        value: "5"
+    routes:
+      - path: /

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Summer {{ year }} Wrapped — {{ station.name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="story">
+    {% for card in cards %}
+    <section class="card card--{{ loop.index0 % 6 }}" id="card-{{ card.id }}">
+      <div class="card__eyebrow">{{ station.name }}</div>
+      <h1 class="card__headline">{{ card.headline }}</h1>
+      <p class="card__sentence">{{ card.sentence }}</p>
+      {% if card.chart %}
+        <div class="card__chart"><canvas id="chart-{{ card.id }}"></canvas></div>
+      {% endif %}
+      {% if not loop.last %}<div class="card__scroll-hint">scroll ↓</div>{% endif %}
+      {% if loop.last %}<a href="/" class="btn" style="margin-top:24px">Wrap another station</a>{% endif %}
+    </section>
+    {% endfor %}
+  </div>
+
+  <script id="cards-data" type="application/json">{{ cards | tojson }}</script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="{{ url_for('static', filename='js/wrapped.js') }}"></script>
+</body>
+</html>
