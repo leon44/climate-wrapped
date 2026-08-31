@@ -21,5 +21,13 @@ services:
     envs:
       - key: GATE_REPORTING_LAG_DAYS
         value: "5"
+      # OpenBLAS misdetects available cores on cgroup-limited containers and
+      # can overflow its internal thread-pool buffer, segfaulting the worker
+      # (SIGSEGV) the first time any LAPACK-backed numpy call runs under this
+      # instance size. Force single-threaded BLAS/OMP as defense in depth.
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
     routes:
       - path: /

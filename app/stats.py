@@ -113,11 +113,20 @@ def _split_current_historical(qualifying: dict, current_year: int) -> tuple[pd.D
 
 
 def _linear_trend_per_decade(series: dict) -> float:
+    """Slope of a 1-degree least-squares fit, in units per decade.
+
+    Computed by hand (closed-form OLS) rather than via np.polyfit: polyfit
+    routes through LAPACK's lstsq, which spins up OpenBLAS's native thread
+    pool on first use -- on cgroup-limited containers that pool has been
+    observed to overflow an internal buffer and SIGSEGV the worker. A 1D fit
+    over a handful of points doesn't need LAPACK at all.
+    """
     years = np.array(sorted(series.keys()), dtype=float)
     if len(years) < 2:
         return 0.0
     counts = np.array([series[y] for y in sorted(series.keys())], dtype=float)
-    slope_per_year = float(np.polyfit(years, counts, 1)[0])
+    years_centered = years - years.mean()
+    slope_per_year = float((years_centered * counts).sum() / (years_centered ** 2).sum())
     return slope_per_year * 10
 
 
