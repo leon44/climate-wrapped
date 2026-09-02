@@ -84,18 +84,35 @@ function clearMarkers() {
   markers = [];
 }
 
-function thermometerIcon(variant) {
+// No barometer emoji exists in Unicode, so this is a small hand-drawn dial
+// (cream face, dark rim/ticks, red needle) in the same inline-SVG style as
+// the "View wrapped" arrow icon above.
+const BAROMETER_SVG = `
+  <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="24" cy="24" r="20" fill="#f5efe0" stroke="#3a2a1a" stroke-width="3"/>
+    <g stroke="#3a2a1a" stroke-width="2" stroke-linecap="round">
+      <line x1="24" y1="6" x2="24" y2="10"/>
+      <line x1="42" y1="24" x2="38" y2="24"/>
+      <line x1="6" y1="24" x2="10" y2="24"/>
+      <line x1="24" y1="42" x2="24" y2="38"/>
+    </g>
+    <line x1="24" y1="24" x2="32" y2="15" stroke="#c81e3a" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="24" cy="24" r="3" fill="#3a2a1a"/>
+  </svg>
+`;
+
+function barometerIcon(variant) {
   return L.divIcon({
-    className: `station-thermo-icon station-thermo-icon--${variant}`,
-    html: "🌡️",
-    iconSize: [52, 52],
-    iconAnchor: [26, 48],
-    popupAnchor: [0, -44],
+    className: `station-barometer-icon station-barometer-icon--${variant}`,
+    html: BAROMETER_SVG,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+    popupAnchor: [0, -26],
   });
 }
 
-const overviewIcon = thermometerIcon("overview");
-const highlightIcon = thermometerIcon("highlight");
+const overviewIcon = barometerIcon("overview");
+const highlightIcon = barometerIcon("highlight");
 
 // Overview layer: every station in the network, clustered into count
 // bubbles when zoomed out and split into individual pins once zoomed in

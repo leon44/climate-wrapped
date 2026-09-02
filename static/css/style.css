@@ -215,18 +215,24 @@ a { color: inherit; }
   color: #2a0413;
 }
 
-/* Individual station pins: a thermometer emoji instead of the default
-   Leaflet map pin, in a plain (unclipped) divIcon so the emoji shows at
+/* Individual station pins: a small barometer-dial SVG instead of the
+   default Leaflet map pin, in a plain (unclipped) divIcon so it shows at
    full size without Leaflet's icon-image masking. */
-.station-thermo-icon {
-  font-size: 40px;
-  line-height: 1;
-  text-align: center;
+.station-barometer-icon {
+  width: 40px;
+  height: 40px;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
-.station-thermo-icon--highlight {
-  font-size: 48px;
+.station-barometer-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.station-barometer-icon--highlight {
+  width: 48px;
+  height: 48px;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 6px rgba(255, 92, 138, 0.8));
 }
 

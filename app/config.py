@@ -28,7 +28,7 @@ SUMMER_START_MONTH_DAY = (6, 1)
 SUMMER_END_MONTH_DAY = (8, 31)
 
 # Station inclusion filters (used at build time by scripts/build_stations.py).
-MIN_RECORD_YEARS = 20
+MIN_RECORD_YEARS = 40
 MAX_YEARS_SINCE_LAST_REPORT = 1
 
 # A few days of grace after Aug 31 to let NOAA's pipeline catch up before we
