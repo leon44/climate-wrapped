@@ -20,12 +20,9 @@
       <div class="search-box">
         <input id="search-input" type="text" placeholder="Search by station name or state…" autocomplete="off">
         <div id="search-results" class="search-results"></div>
+        <p class="data-source">Data source: NOAA Global Historical Climatology Network Daily (GHCNd)</p>
       </div>
       <button id="locate-btn" class="btn btn--ghost">📍 Use my location</button>
-      <label class="preview-toggle" for="preview-2025-checkbox">
-        <input type="checkbox" id="preview-2025-checkbox">
-        2025
-      </label>
     </div>
 
     <div id="map" data-stadia-key="{{ stadia_api_key }}"></div>

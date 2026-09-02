@@ -126,6 +126,13 @@ a { color: inherit; }
 
 .search-results.open { display: block; }
 
+.data-source {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
 .station-row {
   padding: 12px 16px;
   cursor: pointer;
@@ -158,27 +165,6 @@ a { color: inherit; }
   background: transparent;
   border: 1px solid #2a2a35;
   color: var(--text);
-}
-
-.preview-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-radius: 999px;
-  border: 1px solid #2a2a35;
-  color: var(--text-dim);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  user-select: none;
-}
-
-.preview-toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
 }
 
 #map {
@@ -311,6 +297,12 @@ a { color: inherit; }
   font-weight: 700;
 }
 
+.card__icon {
+  font-size: clamp(32px, 8vw, 56px);
+  line-height: 1;
+  margin: 0 0 14px;
+}
+
 .card__headline {
   font-size: clamp(48px, 12vw, 120px);
   font-weight: 800;
@@ -405,6 +397,9 @@ a { color: inherit; }
 .card--3 { background: linear-gradient(135deg, #ffb84d, #7a3d00); }
 .card--4 { background: linear-gradient(135deg, #b06bff, #351b6b); }
 .card--5 { background: linear-gradient(135deg, #ff7a5c, #6b1c10); }
+
+.card--hot_days_trend { background: linear-gradient(135deg, #4dd0ff, #103a6b); }
+.card--hottest_nights { background: linear-gradient(135deg, #b06bff, #351b6b); }
 
 /* ---------------- Gate ---------------- */
 

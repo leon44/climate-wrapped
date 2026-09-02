@@ -9,8 +9,13 @@
 <body>
   <div class="story">
     {% for card in cards %}
-    <section class="card card--{{ loop.index0 % 6 }}" id="card-{{ card.id }}">
+    <section class="card card--{{ loop.index0 % 6 }} card--{{ card.id }}" id="card-{{ card.id }}">
       <div class="card__eyebrow">{{ station.name }}</div>
+      {% if card.id == 'hot_days_trend' %}<div class="card__icon">☀️</div>{% endif %}
+      {% if card.id == 'first_last_hot_day' %}<div class="card__icon">📅</div>{% endif %}
+      {% if card.id == 'hottest_nights' %}<div class="card__icon">🌙</div>{% endif %}
+      {% if card.id == 'precip_total' %}<div class="card__icon">🌧️</div>{% endif %}
+      {% if card.id == 'avg_temp_trend' %}<div class="card__icon">🌡️</div>{% endif %}
       <h1 class="card__headline">{{ card.headline }}</h1>
       <p class="card__sentence">{{ card.sentence }}</p>
       {% if card.chart %}

@@ -1,10 +1,10 @@
 """Raw stats computation for a station's daily history.
 
 compute_stats(df, year, lat) returns a single plain, JSON-serializable dict
-with four stat blocks: anomaly, hot_days_trend, hottest_nights, and
-percentile_rank. It only computes numbers -- it has no opinion about how
-they're phrased (see narrative.py) or which order they're shown in (see
-ranking.py).
+with stat blocks: anomaly, hot_days_trend, first_last_hot_day,
+hottest_nights, avg_temp_trend, percentile_rank, and precip_total. It only
+computes numbers -- it has no opinion about how they're phrased (see
+narrative.py).
 
 Summer definition (pinned here since GHCN-D itself doesn't standardize it):
   - Northern Hemisphere stations (lat >= 0): summer `year` is Jun 1 - Aug 31
@@ -53,6 +53,7 @@ PERCENTILE = 95
 MAX_MISSING_FRACTION = 0.25
 MIN_HISTORICAL_SUMMERS = 8
 MAX_BASELINE_YEARS = 30
+BASELINE_CUTOFF_YEAR = 2010
 
 
 def _is_southern_hemisphere(lat: float | None) -> bool:
@@ -140,20 +141,22 @@ def _linear_trend_per_decade(series: dict) -> float:
 
 
 def compute_anomaly(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
-    """Stat 1: current summer's mean TMAX vs. a rolling baseline of up to
-    the most recent 30 qualifying historical summers."""
+    """Stat 1: current summer's mean TMAX vs. a fixed pre-2010 baseline
+    (qualifying historical summers before BASELINE_CUTOFF_YEAR, up to the
+    most recent 30 of them)."""
     qualifying = _qualifying_summers(df, lat, ("TMAX",))
     current_season, historical = _split_current_historical(qualifying, current_year)
+    pre_cutoff_historical = {y: s for y, s in historical.items() if y < BASELINE_CUTOFF_YEAR}
 
-    if current_season is None or len(historical) < MIN_HISTORICAL_SUMMERS:
+    if current_season is None or len(pre_cutoff_historical) < MIN_HISTORICAL_SUMMERS:
         logger.info(
-            "anomaly: insufficient data for summer %s (historical=%d)",
-            current_year, len(historical),
+            "anomaly: insufficient data for summer %s (pre-%d historical=%d)",
+            current_year, BASELINE_CUTOFF_YEAR, len(pre_cutoff_historical),
         )
         return {"insufficient_data": True}
 
-    baseline_years = sorted(historical.keys(), reverse=True)[:MAX_BASELINE_YEARS]
-    baseline_values = pd.concat([historical[y]["TMAX"] for y in baseline_years]).dropna()
+    baseline_years = sorted(pre_cutoff_historical.keys(), reverse=True)[:MAX_BASELINE_YEARS]
+    baseline_values = pd.concat([pre_cutoff_historical[y]["TMAX"] for y in baseline_years]).dropna()
     baseline_mean = float(baseline_values.mean())
 
     current_values = current_season["TMAX"].dropna()
@@ -169,14 +172,21 @@ def compute_anomaly(df: pd.DataFrame, current_year: int, lat: float | None) -> d
 
 def compute_hot_days_trend(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
     """Stat 2: days per summer above the station's fixed 95th-percentile
-    TMAX threshold (computed once from the whole historical record)."""
+    TMAX threshold (computed once from the whole historical record).
+    historical_mean_count is the pre-2010 average, matching compute_anomaly's
+    baseline convention."""
     qualifying = _qualifying_summers(df, lat, ("TMAX",))
     current_season, historical = _split_current_historical(qualifying, current_year)
+    pre_cutoff_historical = {y: s for y, s in historical.items() if y < BASELINE_CUTOFF_YEAR}
 
-    if current_season is None or len(historical) < MIN_HISTORICAL_SUMMERS:
+    if (
+        current_season is None
+        or len(historical) < MIN_HISTORICAL_SUMMERS
+        or len(pre_cutoff_historical) < MIN_HISTORICAL_SUMMERS
+    ):
         logger.info(
-            "hot_days_trend: insufficient data for summer %s (historical=%d)",
-            current_year, len(historical),
+            "hot_days_trend: insufficient data for summer %s (historical=%d, pre-%d=%d)",
+            current_year, len(historical), BASELINE_CUTOFF_YEAR, len(pre_cutoff_historical),
         )
         return {"insufficient_data": True}
 
@@ -186,26 +196,34 @@ def compute_hot_days_trend(df: pd.DataFrame, current_year: int, lat: float | Non
     historical_series = {y: int((s["TMAX"] > threshold).sum()) for y, s in historical.items()}
     current_count = int((current_season["TMAX"] > threshold).sum())
     full_series = {**historical_series, current_year: current_count}
+    pre_cutoff_mean_count = float(np.mean([historical_series[y] for y in pre_cutoff_historical]))
 
     return {
         "threshold_c": round(threshold),
         "series": full_series,
         "current_summer_count": current_count,
-        "historical_mean_count": round(float(np.mean(list(historical_series.values()))), 1),
+        "historical_mean_count": round(pre_cutoff_mean_count, 1),
         "trend_days_per_decade": round(_linear_trend_per_decade(full_series), 2),
     }
 
 
 def compute_hottest_nights(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
     """Stat 3: mirror of compute_hot_days_trend on TMIN, plus a diurnal
-    range narrowing bonus computed from the same TMAX/TMIN pull."""
+    range narrowing bonus computed from the same TMAX/TMIN pull.
+    historical_mean_count is the pre-2010 average, matching compute_anomaly's
+    baseline convention."""
     qualifying = _qualifying_summers(df, lat, ("TMIN",))
     current_season, historical = _split_current_historical(qualifying, current_year)
+    pre_cutoff_historical = {y: s for y, s in historical.items() if y < BASELINE_CUTOFF_YEAR}
 
-    if current_season is None or len(historical) < MIN_HISTORICAL_SUMMERS:
+    if (
+        current_season is None
+        or len(historical) < MIN_HISTORICAL_SUMMERS
+        or len(pre_cutoff_historical) < MIN_HISTORICAL_SUMMERS
+    ):
         logger.info(
-            "hottest_nights: insufficient data for summer %s (historical=%d)",
-            current_year, len(historical),
+            "hottest_nights: insufficient data for summer %s (historical=%d, pre-%d=%d)",
+            current_year, len(historical), BASELINE_CUTOFF_YEAR, len(pre_cutoff_historical),
         )
         return {"insufficient_data": True}
 
@@ -215,6 +233,7 @@ def compute_hottest_nights(df: pd.DataFrame, current_year: int, lat: float | Non
     historical_series = {y: int((s["TMIN"] > threshold).sum()) for y, s in historical.items()}
     current_count = int((current_season["TMIN"] > threshold).sum())
     full_series = {**historical_series, current_year: current_count}
+    pre_cutoff_mean_count = float(np.mean([historical_series[y] for y in pre_cutoff_historical]))
 
     diurnal_current, diurnal_baseline = _diurnal_range_bonus(df, current_year, lat)
 
@@ -222,7 +241,7 @@ def compute_hottest_nights(df: pd.DataFrame, current_year: int, lat: float | Non
         "night_threshold_c": round(threshold),
         "series": full_series,
         "current_summer_count": current_count,
-        "historical_mean_count": round(float(np.mean(list(historical_series.values()))), 1),
+        "historical_mean_count": round(pre_cutoff_mean_count, 1),
         "trend_nights_per_decade": round(_linear_trend_per_decade(full_series), 2),
         "diurnal_range_current_c": diurnal_current,
         "diurnal_range_baseline_c": diurnal_baseline,
@@ -246,6 +265,150 @@ def _diurnal_range_bonus(df: pd.DataFrame, current_year: int, lat: float | None)
     ).dropna()
     diurnal_baseline = round(float(historical_ranges.mean()), 1)
     return diurnal_current, diurnal_baseline
+
+
+def compute_first_last_hot_day(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
+    """Stat: this summer's first and last day above the station's fixed
+    95th-percentile TMAX threshold (same threshold convention as
+    compute_hot_days_trend, recomputed independently here off the same
+    qualifying historical summers), vs. the pre-2010 average first/last
+    hot-day date.
+
+    A historical summer with no day above threshold contributes nothing to
+    the first/last averages (there's nothing to average) but still counts
+    toward the MIN_HISTORICAL_SUMMERS gate via `historical`."""
+    qualifying = _qualifying_summers(df, lat, ("TMAX",))
+    current_season, historical = _split_current_historical(qualifying, current_year)
+    pre_cutoff_historical = {y: s for y, s in historical.items() if y < BASELINE_CUTOFF_YEAR}
+
+    if (
+        current_season is None
+        or len(historical) < MIN_HISTORICAL_SUMMERS
+        or len(pre_cutoff_historical) < MIN_HISTORICAL_SUMMERS
+    ):
+        logger.info(
+            "first_last_hot_day: insufficient data for summer %s (historical=%d, pre-%d=%d)",
+            current_year, len(historical), BASELINE_CUTOFF_YEAR, len(pre_cutoff_historical),
+        )
+        return {"insufficient_data": True}
+
+    all_historical_tmax = pd.concat([s["TMAX"] for s in historical.values()]).dropna()
+    threshold = float(np.percentile(all_historical_tmax, PERCENTILE))
+
+    def _first_last_offsets(season: pd.DataFrame) -> tuple[int | None, int | None]:
+        hot_days = season.loc[season["TMAX"] > threshold, "DATE"]
+        if hot_days.empty:
+            return None, None
+        season_start = season["DATE"].min()
+        return int((hot_days.min() - season_start).days), int((hot_days.max() - season_start).days)
+
+    current_first_offset, current_last_offset = _first_last_offsets(current_season)
+
+    pre_cutoff_offsets = [
+        offsets for offsets in (_first_last_offsets(s) for s in pre_cutoff_historical.values())
+        if offsets[0] is not None
+    ]
+
+    if current_first_offset is None or not pre_cutoff_offsets:
+        logger.info(
+            "first_last_hot_day: no qualifying hot day for summer %s or its pre-%d history",
+            current_year, BASELINE_CUTOFF_YEAR,
+        )
+        return {"insufficient_data": True}
+
+    avg_first_offset = round(float(np.mean([f for f, _ in pre_cutoff_offsets])))
+    avg_last_offset = round(float(np.mean([l for _, l in pre_cutoff_offsets])))
+
+    season_start, _ = summer_window(current_year, lat)
+
+    def _offset_to_date(offset: int) -> str:
+        return (season_start + datetime.timedelta(days=offset)).isoformat()
+
+    return {
+        "threshold_c": round(threshold),
+        "current_first_hot_day": _offset_to_date(current_first_offset),
+        "current_last_hot_day": _offset_to_date(current_last_offset),
+        "historical_avg_first_hot_day": _offset_to_date(avg_first_offset),
+        "historical_avg_last_hot_day": _offset_to_date(avg_last_offset),
+        "first_hot_day_days_diff": current_first_offset - avg_first_offset,
+        "last_hot_day_days_diff": current_last_offset - avg_last_offset,
+        "historical_summers_used": len(pre_cutoff_offsets),
+    }
+
+
+def compute_avg_temp_trend(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
+    """Stat: rolling 5-summer mean of average daily temperature (mean of
+    TMAX and TMIN, i.e. day and night combined), plus the linear trend per
+    decade fit through that rolling series from BASELINE_CUTOFF_YEAR (2010)
+    onward.
+
+    The rolling window is over the sequence of qualifying summers (a summer
+    dropped for missing data doesn't count toward the window), not a strict
+    5 consecutive calendar years -- same convention as this module's other
+    per-year series."""
+    qualifying = _qualifying_summers(df, lat, ("TMAX", "TMIN"))
+    current_season, historical = _split_current_historical(qualifying, current_year)
+
+    if current_season is None or len(historical) < MIN_HISTORICAL_SUMMERS:
+        logger.info(
+            "avg_temp_trend: insufficient data for summer %s (historical=%d)",
+            current_year, len(historical),
+        )
+        return {"insufficient_data": True}
+
+    all_summers = {**historical, current_year: current_season}
+    years = sorted(all_summers.keys())
+    yearly_means = pd.Series(
+        [float(((all_summers[y]["TMAX"] + all_summers[y]["TMIN"]) / 2).mean()) for y in years],
+        index=years,
+    )
+    rolling = yearly_means.rolling(window=5, min_periods=5).mean().dropna()
+    rolling_series = {int(y): round(float(v), 1) for y, v in rolling.items()}
+
+    trend_series = {y: v for y, v in rolling_series.items() if y >= BASELINE_CUTOFF_YEAR}
+    if current_year not in rolling_series or len(trend_series) < 2:
+        logger.info(
+            "avg_temp_trend: insufficient rolling coverage since %d for summer %s",
+            BASELINE_CUTOFF_YEAR, current_year,
+        )
+        return {"insufficient_data": True}
+
+    return {
+        "series": rolling_series,
+        "current_rolling_mean_c": rolling_series[current_year],
+        "trend_c_per_decade_since_2010": round(_linear_trend_per_decade(trend_series), 2),
+    }
+
+
+def compute_precip_total(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
+    """Stat: total PRCP (mm) summed over the summer, current vs. the pre-2010
+    average, mirroring compute_hot_days_trend's baseline convention."""
+    qualifying = _qualifying_summers(df, lat, ("PRCP",))
+    current_season, historical = _split_current_historical(qualifying, current_year)
+    pre_cutoff_historical = {y: s for y, s in historical.items() if y < BASELINE_CUTOFF_YEAR}
+
+    if (
+        current_season is None
+        or len(historical) < MIN_HISTORICAL_SUMMERS
+        or len(pre_cutoff_historical) < MIN_HISTORICAL_SUMMERS
+    ):
+        logger.info(
+            "precip_total: insufficient data for summer %s (historical=%d, pre-%d=%d)",
+            current_year, len(historical), BASELINE_CUTOFF_YEAR, len(pre_cutoff_historical),
+        )
+        return {"insufficient_data": True}
+
+    historical_series = {y: round(float(s["PRCP"].dropna().sum()), 1) for y, s in historical.items()}
+    current_total = round(float(current_season["PRCP"].dropna().sum()), 1)
+    full_series = {**historical_series, current_year: current_total}
+    pre_cutoff_mean_mm = float(np.mean([historical_series[y] for y in pre_cutoff_historical]))
+
+    return {
+        "current_total_mm": current_total,
+        "series": full_series,
+        "historical_mean_mm": round(pre_cutoff_mean_mm, 1),
+        "trend_mm_per_decade": round(_linear_trend_per_decade(full_series), 1),
+    }
 
 
 def compute_percentile_rank(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
@@ -303,6 +466,9 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
             "hot_days_trend": {"insufficient_data": True},
             "hottest_nights": {"insufficient_data": True},
             "percentile_rank": {"insufficient_data": True},
+            "precip_total": {"insufficient_data": True},
+            "avg_temp_trend": {"insufficient_data": True},
+            "first_last_hot_day": {"insufficient_data": True},
         }
 
     timing = Stopwatch()
@@ -310,10 +476,19 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
         anomaly = compute_anomaly(df, year, lat)
     with timing.split("hot_days_trend"):
         hot_days_trend = compute_hot_days_trend(df, year, lat)
+    with timing.split("first_last_hot_day"):
+        first_last_hot_day = compute_first_last_hot_day(df, year, lat)
     with timing.split("hottest_nights"):
         hottest_nights = compute_hottest_nights(df, year, lat)
     with timing.split("percentile_rank"):
         percentile_rank = compute_percentile_rank(df, year, lat)
+    with timing.split("precip_total"):
+        precip_total = (
+            compute_precip_total(df, year, lat)
+            if "PRCP" in df.columns else {"insufficient_data": True}
+        )
+    with timing.split("avg_temp_trend"):
+        avg_temp_trend = compute_avg_temp_trend(df, year, lat)
     print(f"[stats timing] {timing.summary()}")
 
     return {
@@ -322,4 +497,7 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
         "hot_days_trend": hot_days_trend,
         "hottest_nights": hottest_nights,
         "percentile_rank": percentile_rank,
+        "precip_total": precip_total,
+        "avg_temp_trend": avg_temp_trend,
+        "first_last_hot_day": first_last_hot_day,
     }

@@ -31,9 +31,11 @@ SUMMER_END_MONTH_DAY = (8, 31)
 MIN_RECORD_YEARS = 40
 MAX_YEARS_SINCE_LAST_REPORT = 1
 
-# A few days of grace after Aug 31 to let NOAA's pipeline catch up before we
-# trust a station's summer data as "fully present".
-GATE_REPORTING_LAG_DAYS = int(os.environ.get("GATE_REPORTING_LAG_DAYS", 5))
+# Grace period after Aug 31 before the calendar gate opens. Left at 0 so the
+# gate opens as soon as summer ends -- any trailing days NOAA hasn't ingested
+# yet are just missing data, absorbed by the MIN_DAY_COVERAGE check in
+# app/gate.py rather than an explicit wait here.
+GATE_REPORTING_LAG_DAYS = int(os.environ.get("GATE_REPORTING_LAG_DAYS", 0))
 
 # Testing/dev-only override: set FAKE_TODAY=YYYY-MM-DD to make the gate
 # (app/gate.py) believe it's that date instead of the real one, so you can

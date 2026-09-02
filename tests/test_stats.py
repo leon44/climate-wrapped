@@ -20,9 +20,10 @@ import pytest
 import app.stats as stats_mod
 from app.ghcnd import StationFetchError, get_station_dataframe
 from app.narrative import get_narrator
-from app.ranking import rank_cards
 from app.stats import (
     compute_anomaly,
+    compute_avg_temp_trend,
+    compute_first_last_hot_day,
     compute_hot_days_trend,
     compute_hottest_nights,
     compute_percentile_rank,
@@ -155,6 +156,43 @@ def test_compute_hot_days_trend_insufficient_data():
     assert compute_hot_days_trend(df, 2024, NORTH_LAT) == {"insufficient_data": True}
 
 
+# -- stat: compute_first_last_hot_day ---------------------------------------
+
+def test_compute_first_last_hot_day_known_values(lower_min_historical):
+    def build_year(first_idx, last_idx):
+        vals = [20.0] * 92
+        vals[first_idx] = 35.0
+        vals[last_idx] = 35.0
+        return vals
+
+    df = _summer_df({
+        2005: {"TMAX": build_year(8, 80)},
+        2006: {"TMAX": build_year(10, 82)},
+        2007: {"TMAX": build_year(12, 84)},
+        2008: {"TMAX": build_year(5, 90)},
+    })
+    result = compute_first_last_hot_day(df, 2008, NORTH_LAT)
+    assert result["threshold_c"] == 20
+
+    season_start = datetime.date(2008, 6, 1)
+    assert result["current_first_hot_day"] == (season_start + datetime.timedelta(days=5)).isoformat()
+    assert result["current_last_hot_day"] == (season_start + datetime.timedelta(days=90)).isoformat()
+    assert result["historical_avg_first_hot_day"] == (season_start + datetime.timedelta(days=10)).isoformat()
+    assert result["historical_avg_last_hot_day"] == (season_start + datetime.timedelta(days=82)).isoformat()
+    assert result["first_hot_day_days_diff"] == -5
+    assert result["last_hot_day_days_diff"] == 8
+    assert result["historical_summers_used"] == 3
+
+
+def test_compute_first_last_hot_day_insufficient_data():
+    df = _summer_df({
+        2022: {"TMAX": 20.0},
+        2023: {"TMAX": 20.0},
+        2024: {"TMAX": 25.0},
+    })
+    assert compute_first_last_hot_day(df, 2024, NORTH_LAT) == {"insufficient_data": True}
+
+
 # -- stat 3: compute_hottest_nights ----------------------------------------
 
 def test_compute_hottest_nights_known_values(lower_min_historical):
@@ -186,6 +224,30 @@ def test_compute_hottest_nights_insufficient_data():
         2024: {"TMIN": 12.0, "TMAX": 22.0},
     })
     assert compute_hottest_nights(df, 2024, NORTH_LAT) == {"insufficient_data": True}
+
+
+# -- stat: compute_avg_temp_trend --------------------------------------------
+
+def test_compute_avg_temp_trend_known_values(lower_min_historical):
+    # avg daily temp (TMAX+TMIN)/2 rises by 1.0C/year -> 10C/decade, and the
+    # rolling window is 5 summers, so the first two rolling points land on
+    # 2024 and 2025 (17.0, 18.0).
+    df = _summer_df({
+        2020 + i: {"TMAX": 20.0 + i, "TMIN": 10.0 + i} for i in range(6)
+    })
+    result = compute_avg_temp_trend(df, 2025, NORTH_LAT)
+    assert result["series"] == {2024: 17.0, 2025: 18.0}
+    assert result["current_rolling_mean_c"] == 18.0
+    assert result["trend_c_per_decade_since_2010"] == 10.0
+
+
+def test_compute_avg_temp_trend_insufficient_data():
+    df = _summer_df({
+        2022: {"TMAX": 20.0, "TMIN": 10.0},
+        2023: {"TMAX": 20.0, "TMIN": 10.0},
+        2024: {"TMAX": 25.0, "TMIN": 15.0},
+    })
+    assert compute_avg_temp_trend(df, 2024, NORTH_LAT) == {"insufficient_data": True}
 
 
 # -- stat 4: compute_percentile_rank ---------------------------------------
@@ -294,9 +356,9 @@ def _is_leap(year):
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
-# -- narrative / ranking integration ----------------------------------------
+# -- narrative integration ---------------------------------------------------
 
-def test_ranking_and_narrative_on_full_synthetic_history(lower_min_historical):
+def test_narrative_shows_all_available_cards_in_fixed_order(lower_min_historical):
     def build_year(n_hot):
         tmin = _tail(92, 10.0, n_hot, 22.0)
         tmax = [t + 10.0 for t in tmin]
@@ -306,18 +368,20 @@ def test_ranking_and_narrative_on_full_synthetic_history(lower_min_historical):
     df = _summer_df(specs)
     stats = compute_stats(df, 2023, NORTH_LAT)
 
-    ranked = rank_cards(stats)
-    assert ranked[0]["id"] == "anomaly"  # always leads as the headline number
-    scores = [c["score"] for c in ranked]
-    assert scores == sorted(scores, reverse=True)
-
     station = {"name": "Test Station", "first_year": 2020}
     cards = get_narrator().build_cards(stats, station)
-    assert cards[0]["id"] == "intro"
-    assert cards[-1]["id"] == "outro"
+    # cards appear in fixed CARD_ORDER, skipping whatever the station's data
+    # can't support -- no ranking/significance involved.
+    from app.narrative import CARD_ORDER
+    expected_ids = ["intro"] + [
+        cid for cid in CARD_ORDER if not stats[cid].get("insufficient_data")
+    ] + ["outro"]
+    assert [c["id"] for c in cards] == expected_ids
+    assert "precip_total" not in expected_ids  # this synthetic df has no PRCP column
     for card in cards:
         assert card["headline"]
         assert card["sentence"]
+        assert "significance" not in card
     json.dumps(cards)
 
     percentile_card = next(c for c in cards if c["id"] == "percentile_rank")

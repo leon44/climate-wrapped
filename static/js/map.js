@@ -1,29 +1,8 @@
 const mapDiv = document.getElementById("map");
 const stadiaKey = mapDiv.dataset.stadiaKey || "";
 
-// "2025" preview toggle: lets you demo the wrapped story on a real deploy
-// before this year's summer-completion gate has opened, by asking the
-// server to pretend today is 2025-09-15 (see the preview param handling in
-// app/routes.py) instead of requiring a permanent FAKE_TODAY env var.
-const preview2025Checkbox = document.getElementById("preview-2025-checkbox");
-const PREVIEW_STORAGE_KEY = "climateWrapped.preview2025";
-try {
-  preview2025Checkbox.checked = localStorage.getItem(PREVIEW_STORAGE_KEY) === "1";
-} catch (e) {
-  // localStorage unavailable (e.g. private browsing) -- default unchecked.
-}
-preview2025Checkbox.addEventListener("change", () => {
-  try {
-    localStorage.setItem(PREVIEW_STORAGE_KEY, preview2025Checkbox.checked ? "1" : "0");
-  } catch (e) {
-    // ignore -- preview toggle just won't persist across page loads.
-  }
-});
-
 function wrappedUrl(stationId) {
-  return preview2025Checkbox.checked
-    ? `/wrapped/${stationId}?preview=2025`
-    : `/wrapped/${stationId}`;
+  return `/wrapped/${stationId}`;
 }
 
 // Station lookups (id -> station object) so the delegated click handler

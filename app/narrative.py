@@ -1,5 +1,4 @@
-"""Turns a stats dict + card ranking into the actual card copy shown in the
-wrapped story.
+"""Turns a stats dict into the actual card copy shown in the wrapped story.
 
 Two ways to generate this copy were considered:
 
@@ -23,8 +22,10 @@ would need to change.
 import abc
 import datetime
 
-from app.ranking import rank_cards
-
+CARD_ORDER = [
+    "anomaly", "hot_days_trend", "first_last_hot_day", "hottest_nights",
+    "avg_temp_trend", "percentile_rank", "precip_total",
+]
 
 _ORDINAL_SUFFIXES = {1: "st", 2: "nd", 3: "rd"}
 
@@ -56,6 +57,15 @@ def _fmt_date(iso_date: str) -> str:
         return iso_date
 
 
+def _fmt_month_day(iso_date: str) -> str:
+    """'2025-06-24' -> 'Jun 24'. Used where the comparison is about timing
+    within the season, not the specific calendar year."""
+    try:
+        return datetime.date.fromisoformat(iso_date).strftime("%b %-d")
+    except (ValueError, TypeError):
+        return iso_date
+
+
 class Narrator(abc.ABC):
     @abc.abstractmethod
     def build_cards(self, stats: dict, station: dict) -> list:
@@ -74,16 +84,20 @@ class TemplateNarrator(Narrator):
         builders = {
             "anomaly": self._anomaly_card,
             "hot_days_trend": self._hot_days_trend_card,
+            "first_last_hot_day": self._first_last_hot_day_card,
             "hottest_nights": self._hottest_nights_card,
+            "avg_temp_trend": self._avg_temp_trend_card,
             "percentile_rank": self._percentile_rank_card,
+            "precip_total": self._precip_total_card,
         }
 
-        for entry in rank_cards(stats):
-            builder = builders.get(entry["id"])
+        for card_id in CARD_ORDER:
+            block = stats.get(card_id)
+            if block is None or block.get("insufficient_data"):
+                continue
+            builder = builders.get(card_id)
             if builder:
-                card = builder(stats[entry["id"]], stats, station)
-                card["significance"] = entry["score"]
-                cards.append(card)
+                cards.append(builder(block, stats, station))
 
         cards.append(self._outro_card(stats, station, year))
         return cards
@@ -102,18 +116,17 @@ class TemplateNarrator(Narrator):
         direction = "warmer" if block["anomaly_c"] >= 0 else "cooler"
         return {
             "id": "anomaly", "kind": "stat",
-            "headline": f"{block['anomaly_c']:+.1f}°C",
+            "headline": _c(block['current_mean_c'], 1),
             "sentence": (
-                f"This summer averaged {_c(block['current_mean_c'], 1)} — "
-                f"{abs(block['anomaly_c']):.1f}°C {direction} than the "
-                f"{block['baseline_years_used']}-year average of "
+                f"This summer's average daily high was {_c(block['current_mean_c'], 1)}. "
+                f"That's {abs(block['anomaly_c']):.1f}°C {direction} than the "
+                f"pre-2010 average of "
                 f"{_c(block['baseline_mean_c'], 1)}."
             ),
             "stats": block,
         }
 
     def _hot_days_trend_card(self, block, stats, station):
-        direction = "more" if block["trend_days_per_decade"] > 0 else "fewer"
         label = _hot_or_warm(block["threshold_c"])
         years = sorted(block["series"].keys())
         return {
@@ -121,10 +134,8 @@ class TemplateNarrator(Narrator):
             "headline": f"{block['current_summer_count']} {label} days",
             "sentence": (
                 f"{block['current_summer_count']} days topped {_c(block['threshold_c'])} "
-                f"this summer — your station's {label}-day bar — versus a historical "
-                f"average of {block['historical_mean_count']:.1f}. That's trending "
-                f"toward {abs(block['trend_days_per_decade']):.1f} {direction} days "
-                f"per decade."
+                f"this summer. Versus a pre-2010 "
+                f"average of {block['historical_mean_count']:.1f}."
             ),
             "chart": {
                 "type": "bar",
@@ -134,15 +145,36 @@ class TemplateNarrator(Narrator):
             "stats": block,
         }
 
+    def _first_last_hot_day_card(self, block, stats, station):
+        label = _hot_or_warm(block["threshold_c"])
+        first_diff = block["first_hot_day_days_diff"]
+        last_diff = block["last_hot_day_days_diff"]
+        first_direction = "earlier" if first_diff < 0 else "later"
+        last_direction = "later" if last_diff >= 0 else "earlier"
+        return {
+            "id": "first_last_hot_day", "kind": "stat",
+            "headline": (
+                f"{_fmt_month_day(block['current_first_hot_day'])} – "
+                f"{_fmt_month_day(block['current_last_hot_day'])}"
+            ),
+            "sentence": (
+                f"The first {label} day this summer was {_fmt_month_day(block['current_first_hot_day'])}, "
+                f"{abs(first_diff)} day{'s' if abs(first_diff) != 1 else ''} {first_direction} than the "
+                f"pre-2010 average of {_fmt_month_day(block['historical_avg_first_hot_day'])}. "
+                f"The last one was {_fmt_month_day(block['current_last_hot_day'])}, "
+                f"{abs(last_diff)} day{'s' if abs(last_diff) != 1 else ''} {last_direction} than the "
+                f"average of {_fmt_month_day(block['historical_avg_last_hot_day'])}."
+            ),
+            "stats": block,
+        }
+
     def _hottest_nights_card(self, block, stats, station):
-        direction = "more" if block["trend_nights_per_decade"] > 0 else "fewer"
         label = _hot_or_warm(block["night_threshold_c"])
         years = sorted(block["series"].keys())
         sentence = (
             f"{block['current_summer_count']} nights stayed above "
-            f"{_c(block['night_threshold_c'])} this summer, versus a historical "
-            f"average of {block['historical_mean_count']:.1f} — trending toward "
-            f"{abs(block['trend_nights_per_decade']):.1f} {direction} nights per decade."
+            f"{_c(block['night_threshold_c'])} this summer, versus a pre-2010 "
+            f"average of {block['historical_mean_count']:.1f}."
         )
         if block["diurnal_range_current_c"] is not None and block["diurnal_range_baseline_c"] is not None:
             narrow_direction = (
@@ -160,6 +192,26 @@ class TemplateNarrator(Narrator):
             "sentence": sentence,
             "chart": {
                 "type": "bar",
+                "labels": [str(y) for y in years],
+                "data": [block["series"][y] for y in years],
+            },
+            "stats": block,
+        }
+
+    def _avg_temp_trend_card(self, block, stats, station):
+        years = sorted(block["series"].keys())
+        diff = block["current_rolling_mean_c"] - block["series"][years[0]]
+        direction = "warmer" if diff >= 0 else "colder"
+        return {
+            "id": "avg_temp_trend", "kind": "trend",
+            "headline": _c(block["current_rolling_mean_c"], 1),
+            "sentence": (
+                f"The 5-year rolling average of day-and-night summer temperature is now "
+                f"{_c(block['current_rolling_mean_c'], 1)}. That's {_c(abs(diff), 1)} "
+                f"{direction} than when this station started measuring."
+            ),
+            "chart": {
+                "type": "line",
                 "labels": [str(y) for y in years],
                 "data": [block["series"][y] for y in years],
             },
@@ -187,6 +239,26 @@ class TemplateNarrator(Narrator):
             "list": {
                 "title": "Top 5 hottest summers on record",
                 "rows": top_list,
+            },
+            "stats": block,
+        }
+
+    def _precip_total_card(self, block, stats, station):
+        years = sorted(block["series"].keys())
+        direction = "wetter" if block["current_total_mm"] >= block["historical_mean_mm"] else "drier"
+        diff_mm = abs(block["current_total_mm"] - block["historical_mean_mm"])
+        return {
+            "id": "precip_total", "kind": "trend",
+            "headline": f"{block['current_total_mm']:.0f}mm of rain",
+            "sentence": (
+                f"{block['current_total_mm']:.0f}mm fell this summer. "
+                f"That's {diff_mm:.0f}mm {direction} than the pre-2010 "
+                f"average of {block['historical_mean_mm']:.0f}mm."
+            ),
+            "chart": {
+                "type": "bar",
+                "labels": [str(y) for y in years],
+                "data": [block["series"][y] for y in years],
             },
             "stats": block,
         }

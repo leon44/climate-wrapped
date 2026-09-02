@@ -55,11 +55,11 @@ def _save_cached_wrapped(station_id: str, year: int, payload: dict) -> None:
     _stats_cache_path(station_id, year).write_text(json.dumps(payload), encoding="utf-8")
 
 
-#: Fixed date used by the "2025" preview checkbox on the landing page --
-#: lets you demo the wrapped story on a real deploy before this year's
-#: summer-completion gate has opened, without a permanent FAKE_TODAY env
-#: var (see app/config.py) forcing that date for every visitor.
-PREVIEW_2025_DATE = datetime.date(2025, 9, 15)
+def _has_stat_cards(cards: list[dict]) -> bool:
+    """True if build_cards produced more than just the always-present
+    intro/outro cards -- i.e. the station's data actually supported at
+    least one stat."""
+    return any(c["kind"] not in ("intro", "outro") for c in cards)
 
 
 @bp.route("/wrapped/<station_id>")
@@ -68,8 +68,7 @@ def wrapped(station_id):
     if not station:
         abort(404, f"Unknown station {station_id}")
 
-    preview_today = PREVIEW_2025_DATE if request.args.get("preview") == "2025" else None
-    calendar_gate = gate.gate_status(preview_today)
+    calendar_gate = gate.gate_status()
     if not calendar_gate["is_open"]:
         print(
             f"[wrapped gate] {station_id} ({station.get('name')}) blocked: "
@@ -85,6 +84,11 @@ def wrapped(station_id):
 
     cached = _load_cached_wrapped(station_id, year)
     if cached:
+        if not _has_stat_cards(cached["cards"]):
+            return render_template(
+                "gate.html", station=station, gate=calendar_gate,
+                reason="insufficient_data",
+            )
         return render_template("wrapped.html", station=station, cards=cached["cards"],
                                 stats=cached["stats"], year=year)
 
@@ -111,9 +115,10 @@ def wrapped(station_id):
             f"summer {year} data incomplete -- coverage={coverage} "
             f"(need >= {gate.MIN_DAY_COVERAGE} for each of TMAX/TMIN)"
         )
+        coverage_pct = round(min(coverage.values()) * 100)
         return render_template(
             "gate.html", station=station, gate=calendar_gate,
-            reason="data_incomplete",
+            reason="data_incomplete", coverage_pct=coverage_pct,
         )
 
     with timing.split("compute_stats"):
@@ -128,5 +133,11 @@ def wrapped(station_id):
         })
 
     print(f"[wrapped timing] {station_id}: {timing.summary()}")
+
+    if not _has_stat_cards(cards):
+        return render_template(
+            "gate.html", station=station, gate=calendar_gate,
+            reason="insufficient_data",
+        )
 
     return render_template("wrapped.html", station=station, cards=cards, stats=stats, year=year)

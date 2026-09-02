@@ -7,6 +7,10 @@ GHCN-D encoding notes (see NOAA's readme.txt):
   - Missing values are blank in the "access" CSV export we use here (the
     fixed-width .dly format uses -9999 for the same thing, so we treat that
     as missing too, defensively).
+  - Each element has a companion "<ELEMENT>_ATTRIBUTES" column packed as
+    "MFLAG,QFLAG,SFLAG". QFLAG (the middle field) is non-blank when the
+    value failed a quality check (e.g. "G" = gap check) -- we drop the
+    value in that case rather than trust it.
 """
 
 import datetime
@@ -24,6 +28,11 @@ _WANTED_RAW_COLUMNS = ["DATE", "TMAX", "TMIN", "PRCP", "AWND", "SNOW", "SNWD"]
 
 # Raw units -> real units. Columns not listed here are left as-is.
 _TENTHS_COLUMNS = {"TMAX": 10.0, "TMIN": 10.0, "PRCP": 10.0, "AWND": 10.0}
+
+# element -> its QC attributes column ("MFLAG,QFLAG,SFLAG").
+_QC_ATTR_COLUMNS = {
+    c: f"{c}_ATTRIBUTES" for c in ("TMAX", "TMIN", "PRCP", "AWND", "SNOW", "SNWD")
+}
 
 MISSING_SENTINELS = (-9999,)
 
@@ -75,6 +84,15 @@ def fetch_raw_csv_text(station_id: str, force_refresh: bool = False) -> str:
 
 def _parse_csv(csv_text: str) -> pd.DataFrame:
     df = pd.read_csv(io.StringIO(csv_text), low_memory=False)
+
+    # Drop values that failed a quality check (non-blank QFLAG) before we
+    # even subset down to the columns we keep.
+    for col, attr_col in _QC_ATTR_COLUMNS.items():
+        if col not in df.columns or attr_col not in df.columns:
+            continue
+        qflag = df[attr_col].fillna("").astype(str).str.split(",", n=2).str[1].fillna("")
+        df.loc[qflag.str.strip() != "", col] = pd.NA
+
     available = [c for c in _WANTED_RAW_COLUMNS if c in df.columns]
     df = df[available].copy()
 

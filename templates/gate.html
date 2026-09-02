@@ -12,10 +12,16 @@
       {% if reason == "data_incomplete" %}
         <h1>Almost there 🌤️</h1>
         <p>
-          Summer {{ gate.summer_year }} has technically ended, but
-          <strong>{{ station.name }}</strong> hasn't fully published its data
-          for that period yet. NOAA's pipeline can lag a few days behind —
-          check back soon.
+          Summer {{ gate.summer_year }} has technically ended, but we only
+          have {{ coverage_pct }}% daily coverage for Summer 2026 at
+          <strong>{{ station.name }}</strong> right now. NOAA's pipeline can
+          lag a few days behind so check back soon.
+        </p>
+      {% elif reason == "insufficient_data" %}
+        <h1>Ah! 🔍</h1>
+        <p>
+          On closer inspection, there wasn't enough data at
+          <strong>{{ station.name }}</strong>. Try another station.
         </p>
       {% else %}
         <h1>Come back after summer ends 🌻</h1>
