@@ -229,15 +229,15 @@ def test_compute_hottest_nights_insufficient_data():
 # -- stat: compute_avg_temp_trend --------------------------------------------
 
 def test_compute_avg_temp_trend_known_values(lower_min_historical):
-    # avg daily temp (TMAX+TMIN)/2 rises by 1.0C/year -> 10C/decade, and the
-    # rolling window is 5 summers, so the first two rolling points land on
-    # 2024 and 2025 (17.0, 18.0).
+    # TMAX rises by 1.0C/year -> 10C/decade, and the rolling window is 5
+    # summers, so the first two rolling points land on 2024 and 2025
+    # (22.0, 23.0).
     df = _summer_df({
         2020 + i: {"TMAX": 20.0 + i, "TMIN": 10.0 + i} for i in range(6)
     })
     result = compute_avg_temp_trend(df, 2025, NORTH_LAT)
-    assert result["series"] == {2024: 17.0, 2025: 18.0}
-    assert result["current_rolling_mean_c"] == 18.0
+    assert result["series"] == {2024: 22.0, 2025: 23.0}
+    assert result["current_rolling_mean_c"] == 23.0
     assert result["trend_c_per_decade_since_2010"] == 10.0
 
 

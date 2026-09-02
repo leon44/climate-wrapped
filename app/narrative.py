@@ -206,7 +206,7 @@ class TemplateNarrator(Narrator):
             "id": "avg_temp_trend", "kind": "trend",
             "headline": _c(block["current_rolling_mean_c"], 1),
             "sentence": (
-                f"The 5-year rolling average of day-and-night summer temperature is now "
+                f"The 5-year rolling average of daily high temperature is now "
                 f"{_c(block['current_rolling_mean_c'], 1)}. That's {_c(abs(diff), 1)} "
                 f"{direction} than when this station started measuring."
             ),

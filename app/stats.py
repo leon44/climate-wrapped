@@ -337,16 +337,15 @@ def compute_first_last_hot_day(df: pd.DataFrame, current_year: int, lat: float |
 
 
 def compute_avg_temp_trend(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
-    """Stat: rolling 5-summer mean of average daily temperature (mean of
-    TMAX and TMIN, i.e. day and night combined), plus the linear trend per
-    decade fit through that rolling series from BASELINE_CUTOFF_YEAR (2010)
-    onward.
+    """Stat: rolling 5-summer mean of daily max temperature (TMAX, same
+    measure as the other cards), plus the linear trend per decade fit
+    through that rolling series from BASELINE_CUTOFF_YEAR (2010) onward.
 
     The rolling window is over the sequence of qualifying summers (a summer
     dropped for missing data doesn't count toward the window), not a strict
     5 consecutive calendar years -- same convention as this module's other
     per-year series."""
-    qualifying = _qualifying_summers(df, lat, ("TMAX", "TMIN"))
+    qualifying = _qualifying_summers(df, lat, ("TMAX",))
     current_season, historical = _split_current_historical(qualifying, current_year)
 
     if current_season is None or len(historical) < MIN_HISTORICAL_SUMMERS:
@@ -359,7 +358,7 @@ def compute_avg_temp_trend(df: pd.DataFrame, current_year: int, lat: float | Non
     all_summers = {**historical, current_year: current_season}
     years = sorted(all_summers.keys())
     yearly_means = pd.Series(
-        [float(((all_summers[y]["TMAX"] + all_summers[y]["TMIN"]) / 2).mean()) for y in years],
+        [float(all_summers[y]["TMAX"].mean()) for y in years],
         index=years,
     )
     rolling = yearly_means.rolling(window=5, min_periods=5).mean().dropna()
