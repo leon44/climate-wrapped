@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, render_template
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -14,5 +14,9 @@ def create_app() -> Flask:
 
     from app.routes import bp as main_bp
     app.register_blueprint(main_bp)
+
+    @app.route("/")
+    def root():
+        return render_template("landing.html")
 
     return app

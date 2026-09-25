@@ -32,7 +32,7 @@
           <strong>{{ gate.opens_on }}</strong>.
         </p>
       {% endif %}
-      <a href="/" class="btn">Pick another station</a>
+      <a href="{{ url_for('main.index') }}" class="btn">Pick another station</a>
     </div>
   </div>
 </body>

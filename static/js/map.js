@@ -2,7 +2,7 @@ const mapDiv = document.getElementById("map");
 const stadiaKey = mapDiv.dataset.stadiaKey || "";
 
 function wrappedUrl(stationId) {
-  return `/wrapped/${stationId}`;
+  return `/climate/wrapped/${stationId}`;
 }
 
 // Station lookups (id -> station object) so the delegated click handler
@@ -107,7 +107,7 @@ const stationOverview = L.markerClusterGroup({
 map.addLayer(stationOverview);
 
 async function fetchAllStations() {
-  const resp = await fetch("/api/stations/all");
+  const resp = await fetch("/climate/api/stations/all");
   return resp.ok ? cacheStations(await resp.json()) : [];
 }
 
@@ -162,12 +162,12 @@ function renderShortlist(stationList) {
 }
 
 async function fetchNearest(lat, lon) {
-  const resp = await fetch(`/api/stations/nearest?lat=${lat}&lon=${lon}`);
+  const resp = await fetch(`/climate/api/stations/nearest?lat=${lat}&lon=${lon}`);
   return resp.ok ? cacheStations(await resp.json()) : [];
 }
 
 async function fetchSearch(q) {
-  const resp = await fetch(`/api/stations/search?q=${encodeURIComponent(q)}`);
+  const resp = await fetch(`/climate/api/stations/search?q=${encodeURIComponent(q)}`);
   return resp.ok ? cacheStations(await resp.json()) : [];
 }
 

@@ -10,7 +10,7 @@ from app.narrative import get_narrator
 from app.stats import compute_stats
 from app.timing import Stopwatch
 
-bp = Blueprint("main", __name__)
+bp = Blueprint("main", __name__, url_prefix="/climate")
 
 
 @bp.route("/")

@@ -41,7 +41,7 @@
         </div>
       {% endif %}
       {% if not loop.last %}<div class="card__scroll-hint">scroll ↓</div>{% endif %}
-      {% if loop.last %}<a href="/" class="btn" style="margin-top:24px">Wrap another station</a>{% endif %}
+      {% if loop.last %}<a href="{{ url_for('main.index') }}" class="btn" style="margin-top:24px">Wrap another station</a>{% endif %}
     </section>
     {% endfor %}
   </div>
