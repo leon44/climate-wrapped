@@ -62,6 +62,13 @@ def _has_stat_cards(cards: list[dict]) -> bool:
     return any(c["kind"] not in ("intro", "outro") for c in cards)
 
 
+def _requested_unit() -> str:
+    """?unit= wins (used by the in-page toggle's reload), else the 'unit'
+    cookie set by the client's default-unit detection, else Celsius."""
+    unit = request.args.get("unit") or request.cookies.get("unit", "C")
+    return "F" if unit == "F" else "C"
+
+
 @bp.route("/wrapped/<station_id>")
 def wrapped(station_id):
     station = stations.get_station(station_id)
@@ -82,15 +89,18 @@ def wrapped(station_id):
 
     year = calendar_gate["summer_year"]
 
+    unit = _requested_unit()
+
     cached = _load_cached_wrapped(station_id, year)
     if cached:
-        if not _has_stat_cards(cached["cards"]):
+        cards = get_narrator().build_cards(cached["stats"], station, unit=unit)
+        if not _has_stat_cards(cards):
             return render_template(
                 "gate.html", station=station, gate=calendar_gate,
                 reason="insufficient_data",
             )
-        return render_template("wrapped.html", station=station, cards=cached["cards"],
-                                stats=cached["stats"], year=year)
+        return render_template("wrapped.html", station=station, cards=cards,
+                                stats=cached["stats"], year=year, unit=unit)
 
     timing = Stopwatch()
 
@@ -124,11 +134,11 @@ def wrapped(station_id):
     with timing.split("compute_stats"):
         stats = compute_stats(df, year, station.get("lat"))
     with timing.split("narrative"):
-        cards = get_narrator().build_cards(stats, station)
+        cards = get_narrator().build_cards(stats, station, unit=unit)
 
     with timing.split("cache_save"):
         _save_cached_wrapped(station_id, year, {
-            "stats": stats, "cards": cards,
+            "stats": stats, "cards": get_narrator().build_cards(stats, station),
             "computed_at": datetime.datetime.utcnow().isoformat(),
         })
 
@@ -140,4 +150,4 @@ def wrapped(station_id):
             reason="insufficient_data",
         )
 
-    return render_template("wrapped.html", station=station, cards=cards, stats=stats, year=year)
+    return render_template("wrapped.html", station=station, cards=cards, stats=stats, year=year, unit=unit)

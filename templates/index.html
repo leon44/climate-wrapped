@@ -23,6 +23,10 @@
         <p class="data-source">Data source: NOAA Global Historical Climatology Network Daily (GHCNd)</p>
       </div>
       <button id="locate-btn" class="btn btn--ghost">📍 Use my location</button>
+      <div class="unit-toggle" role="group" aria-label="Temperature unit">
+        <button type="button" class="unit-toggle__option" data-unit="C">°C</button>
+        <button type="button" class="unit-toggle__option" data-unit="F">°F</button>
+      </div>
     </div>
 
     <div id="map" data-stadia-key="{{ stadia_api_key }}"></div>
@@ -40,6 +44,11 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="{{ url_for('static', filename='js/units.js') }}"></script>
+  <script>
+    Units.wireToggles(false);
+    Units.detectDefaultUnit(false);
+  </script>
   <script src="{{ url_for('static', filename='js/map.js') }}"></script>
 </body>
 </html>

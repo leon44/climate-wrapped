@@ -7,12 +7,17 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+  <div class="unit-toggle unit-toggle--floating" role="group" aria-label="Temperature unit">
+    <button type="button" class="unit-toggle__option{% if unit != 'F' %} unit-toggle__option--active{% endif %}" data-unit="C">°C</button>
+    <button type="button" class="unit-toggle__option{% if unit == 'F' %} unit-toggle__option--active{% endif %}" data-unit="F">°F</button>
+  </div>
+
   <div class="story">
     {% for card in cards %}
     <section class="card card--{{ loop.index0 % 6 }} card--{{ card.id }}" id="card-{{ card.id }}">
       <div class="card__eyebrow">{{ station.name }}</div>
+      {% if card.id == 'hottest_day' %}<div class="card__icon">🔥</div>{% endif %}
       {% if card.id == 'hot_days_trend' %}<div class="card__icon">☀️</div>{% endif %}
-      {% if card.id == 'first_last_hot_day' %}<div class="card__icon">📅</div>{% endif %}
       {% if card.id == 'hottest_nights' %}<div class="card__icon">🌙</div>{% endif %}
       {% if card.id == 'precip_total' %}<div class="card__icon">🌧️</div>{% endif %}
       {% if card.id == 'avg_temp_trend' %}<div class="card__icon">🌡️</div>{% endif %}
@@ -43,6 +48,13 @@
 
   <script id="cards-data" type="application/json">{{ cards | tojson }}</script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="{{ url_for('static', filename='js/units.js') }}"></script>
+  <script>
+    // The unit is baked into the server-rendered cards, so switching it
+    // means reloading with the new cookie rather than a client-side swap.
+    Units.wireToggles(true);
+    Units.detectDefaultUnit(true);
+  </script>
   <script src="{{ url_for('static', filename='js/wrapped.js') }}"></script>
 </body>
 </html>

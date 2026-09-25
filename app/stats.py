@@ -2,9 +2,9 @@
 
 compute_stats(df, year, lat) returns a single plain, JSON-serializable dict
 with stat blocks: anomaly, hot_days_trend, first_last_hot_day,
-hottest_nights, avg_temp_trend, percentile_rank, and precip_total. It only
-computes numbers -- it has no opinion about how they're phrased (see
-narrative.py).
+hottest_nights, avg_temp_trend, percentile_rank, precip_total, and
+hottest_day. It only computes numbers -- it has no opinion about how they're
+phrased (see narrative.py).
 
 Summer definition (pinned here since GHCN-D itself doesn't standardize it):
   - Northern Hemisphere stations (lat >= 0): summer `year` is Jun 1 - Aug 31
@@ -105,12 +105,24 @@ def _candidate_years(df: pd.DataFrame) -> range:
     return range(int(years.min()) - 1, int(years.max()) + 2)
 
 
+def _season_slices(df: pd.DataFrame, lat: float | None) -> dict[int, tuple[pd.DataFrame, int]]:
+    """{year: (season_df, total_days)} for every candidate year, sliced once
+    and cached on `df` (df.attrs). compute_stats calls _qualifying_summers
+    once per stat block (9 times, several with the same `columns`) against
+    the same df/lat -- without this cache each of those calls re-ran the
+    same DATE-boundary slicing per year from scratch, which profiling
+    (scripts/profile_wrapped.py) showed was ~90% of compute_stats's time."""
+    cache = df.attrs.setdefault("_season_slice_cache", {})
+    if lat not in cache:
+        cache[lat] = {year: _season_slice(df, year, lat) for year in _candidate_years(df)}
+    return cache[lat]
+
+
 def _qualifying_summers(df: pd.DataFrame, lat: float | None, columns: tuple[str, ...]) -> dict:
     """{year: season_df} for every year whose season has <=10% missing data
     across `columns`."""
     out = {}
-    for year in _candidate_years(df):
-        season, total_days = _season_slice(df, year, lat)
+    for year, (season, total_days) in _season_slices(df, lat).items():
         if _summer_qualifies(season, total_days, columns):
             out[year] = season
     return out
@@ -319,7 +331,8 @@ def compute_first_last_hot_day(df: pd.DataFrame, current_year: int, lat: float |
     avg_first_offset = round(float(np.mean([f for f, _ in pre_cutoff_offsets])))
     avg_last_offset = round(float(np.mean([l for _, l in pre_cutoff_offsets])))
 
-    season_start, _ = summer_window(current_year, lat)
+    season_start, season_end = summer_window(current_year, lat)
+    season_length_days = (season_end - season_start).days + 1
 
     def _offset_to_date(offset: int) -> str:
         return (season_start + datetime.timedelta(days=offset)).isoformat()
@@ -333,6 +346,65 @@ def compute_first_last_hot_day(df: pd.DataFrame, current_year: int, lat: float |
         "first_hot_day_days_diff": current_first_offset - avg_first_offset,
         "last_hot_day_days_diff": current_last_offset - avg_last_offset,
         "historical_summers_used": len(pre_cutoff_offsets),
+        "season_start": season_start.isoformat(),
+        "season_end": season_end.isoformat(),
+        "season_length_days": season_length_days,
+        "current_first_offset_days": current_first_offset,
+        "current_last_offset_days": current_last_offset,
+        "historical_avg_first_offset_days": avg_first_offset,
+        "historical_avg_last_offset_days": avg_last_offset,
+    }
+
+
+def compute_hottest_day(df: pd.DataFrame, current_year: int, lat: float | None) -> dict:
+    """Stat: the single hottest TMAX day of the current summer, plus the
+    day-by-day TMAX series across the season (for the card's chart) and how
+    far back you'd have to go to find a day at least this hot.
+
+    record_since_date is the most recent date *before* the current hottest
+    day with a TMAX at or above it, searched across the station's entire
+    daily record (not just qualifying summers -- a single extreme day
+    doesn't need a whole complete season around it to count). None means no
+    prior day in the record was this hot, i.e. this is an all-time record."""
+    qualifying = _qualifying_summers(df, lat, ("TMAX",))
+    current_season, historical = _split_current_historical(qualifying, current_year)
+    pre_cutoff_historical = {y: s for y, s in historical.items() if y < BASELINE_CUTOFF_YEAR}
+
+    if current_season is None or len(pre_cutoff_historical) < MIN_HISTORICAL_SUMMERS:
+        logger.info(
+            "hottest_day: insufficient data for summer %s (pre-%d historical=%d)",
+            current_year, BASELINE_CUTOFF_YEAR, len(pre_cutoff_historical),
+        )
+        return {"insufficient_data": True}
+
+    current_tmax = current_season["TMAX"]
+    if not current_tmax.notna().any():
+        logger.info("hottest_day: no valid TMAX readings for summer %s", current_year)
+        return {"insufficient_data": True}
+
+    hottest_idx = current_tmax.idxmax()
+    hottest_timestamp = current_season.loc[hottest_idx, "DATE"]
+    hottest_date = hottest_timestamp.date()
+    hottest_tmax = float(current_tmax.loc[hottest_idx])
+
+    prior = df.loc[(df["DATE"] < hottest_timestamp) & df["TMAX"].notna()]
+    at_least_as_hot = prior.loc[prior["TMAX"] >= hottest_tmax]
+    record_since_date = (
+        at_least_as_hot["DATE"].max().date().isoformat() if not at_least_as_hot.empty else None
+    )
+
+    daily_dates = current_season["DATE"].dt.strftime("%Y-%m-%d")
+    daily_series = {
+        date: (round(float(tmax), 1) if pd.notna(tmax) else None)
+        for date, tmax in zip(daily_dates, current_tmax)
+    }
+
+    return {
+        "hottest_day_date": hottest_date.isoformat(),
+        "hottest_day_tmax_c": round(hottest_tmax, 1),
+        "record_since_date": record_since_date,
+        "is_all_time_record": record_since_date is None,
+        "daily_series": daily_series,
     }
 
 
@@ -376,6 +448,7 @@ def compute_avg_temp_trend(df: pd.DataFrame, current_year: int, lat: float | Non
         "series": rolling_series,
         "current_rolling_mean_c": rolling_series[current_year],
         "trend_c_per_decade_since_2010": round(_linear_trend_per_decade(trend_series), 2),
+        "record_start_year": int(df["DATE"].dt.year.min()),
     }
 
 
@@ -468,6 +541,7 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
             "precip_total": {"insufficient_data": True},
             "avg_temp_trend": {"insufficient_data": True},
             "first_last_hot_day": {"insufficient_data": True},
+            "hottest_day": {"insufficient_data": True},
         }
 
     timing = Stopwatch()
@@ -488,6 +562,8 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
         )
     with timing.split("avg_temp_trend"):
         avg_temp_trend = compute_avg_temp_trend(df, year, lat)
+    with timing.split("hottest_day"):
+        hottest_day = compute_hottest_day(df, year, lat)
     print(f"[stats timing] {timing.summary()}")
 
     return {
@@ -499,4 +575,5 @@ def compute_stats(df: pd.DataFrame, year: int, lat: float | None = None) -> dict
         "precip_total": precip_total,
         "avg_temp_trend": avg_temp_trend,
         "first_last_hot_day": first_last_hot_day,
+        "hottest_day": hottest_day,
     }

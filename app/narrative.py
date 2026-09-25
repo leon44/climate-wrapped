@@ -23,8 +23,8 @@ import abc
 import datetime
 
 CARD_ORDER = [
-    "anomaly", "hot_days_trend", "first_last_hot_day", "hottest_nights",
-    "avg_temp_trend", "percentile_rank", "precip_total",
+    "anomaly", "hottest_day", "hot_days_trend",
+    "hottest_nights", "avg_temp_trend", "percentile_rank", "precip_total",
 ]
 
 _ORDINAL_SUFFIXES = {1: "st", 2: "nd", 3: "rd"}
@@ -45,8 +45,28 @@ def _ordinal(n: int) -> str:
     return f"{n}{_ORDINAL_SUFFIXES.get(n % 10, 'th')}"
 
 
-def _c(x, digits=0) -> str:
-    return f"{x:.{digits}f}°C"
+def _temp(c_value, digits=0, unit="C") -> str:
+    """Format an absolute temperature reading (a point on the scale, e.g.
+    'the high was 31°C') -- converts with the C-to-F affine formula."""
+    if unit == "F":
+        return f"{c_value * 9 / 5 + 32:.{digits}f}°F"
+    return f"{c_value:.{digits}f}°C"
+
+
+def _temp_delta(c_value, digits=1, unit="C") -> str:
+    """Format a temperature *difference* (an anomaly or a diurnal range,
+    e.g. '2°C warmer') -- these scale by 9/5 with no +32 offset, since
+    converting a gap between two points isn't converting a point."""
+    if unit == "F":
+        return f"{c_value * 9 / 5:.{digits}f}°F"
+    return f"{c_value:.{digits}f}°C"
+
+
+def _to_unit(c_value, unit="C"):
+    """Convert a raw absolute-temperature chart value (not display text)."""
+    if c_value is None:
+        return None
+    return c_value * 9 / 5 + 32 if unit == "F" else c_value
 
 
 def _fmt_date(iso_date: str) -> str:
@@ -68,7 +88,7 @@ def _fmt_month_day(iso_date: str) -> str:
 
 class Narrator(abc.ABC):
     @abc.abstractmethod
-    def build_cards(self, stats: dict, station: dict) -> list:
+    def build_cards(self, stats: dict, station: dict, unit: str = "C") -> list:
         """Returns an ordered list of card dicts:
         {id, kind, headline, sentence, chart (optional Chart.js spec), stats (raw values for the template)}
         """
@@ -77,14 +97,14 @@ class Narrator(abc.ABC):
 class TemplateNarrator(Narrator):
     """Option 1: deterministic string templates."""
 
-    def build_cards(self, stats: dict, station: dict) -> list:
+    def build_cards(self, stats: dict, station: dict, unit: str = "C") -> list:
         year = stats["summer_year"]
         cards = [self._intro_card(stats, station)]
 
         builders = {
             "anomaly": self._anomaly_card,
+            "hottest_day": self._hottest_day_card,
             "hot_days_trend": self._hot_days_trend_card,
-            "first_last_hot_day": self._first_last_hot_day_card,
             "hottest_nights": self._hottest_nights_card,
             "avg_temp_trend": self._avg_temp_trend_card,
             "percentile_rank": self._percentile_rank_card,
@@ -97,7 +117,7 @@ class TemplateNarrator(Narrator):
                 continue
             builder = builders.get(card_id)
             if builder:
-                cards.append(builder(block, stats, station))
+                cards.append(builder(block, stats, station, unit))
 
         cards.append(self._outro_card(stats, station, year))
         return cards
@@ -112,28 +132,53 @@ class TemplateNarrator(Narrator):
                         f"{station.get('first_year', '—')}. Here's how this summer measured up.",
         }
 
-    def _anomaly_card(self, block, stats, station):
+    def _anomaly_card(self, block, stats, station, unit="C"):
         direction = "warmer" if block["anomaly_c"] >= 0 else "cooler"
         return {
             "id": "anomaly", "kind": "stat",
-            "headline": _c(block['current_mean_c'], 1),
+            "headline": _temp(block['current_mean_c'], 1, unit),
             "sentence": (
-                f"This summer's average daily high was {_c(block['current_mean_c'], 1)}. "
-                f"That's {abs(block['anomaly_c']):.1f}°C {direction} than the "
+                f"This summer's average daily high was {_temp(block['current_mean_c'], 1, unit)}. "
+                f"That's {_temp_delta(abs(block['anomaly_c']), 1, unit)} {direction} than the "
                 f"pre-2010 average of "
-                f"{_c(block['baseline_mean_c'], 1)}."
+                f"{_temp(block['baseline_mean_c'], 1, unit)}."
             ),
             "stats": block,
         }
 
-    def _hot_days_trend_card(self, block, stats, station):
+    def _hottest_day_card(self, block, stats, station, unit="C"):
+        date_label = _fmt_date(block["hottest_day_date"])
+        sentence = (
+            f"The hottest day of summer {stats['summer_year']} was {date_label}, "
+            f"reaching {_temp(block['hottest_day_tmax_c'], 1, unit)}."
+        )
+        if block["is_all_time_record"]:
+            sentence += " That's the hottest day on record."
+        else:
+            sentence += f" That's the hottest day since {_fmt_date(block['record_since_date'])}."
+        days = sorted(block["daily_series"].keys())
+        return {
+            "id": "hottest_day", "kind": "trend",
+            "headline": _temp(block["hottest_day_tmax_c"], 1, unit),
+            "sentence": sentence,
+            "chart": {
+                "type": "line",
+                "labels": [_fmt_month_day(d) for d in days],
+                "data": [_to_unit(block["daily_series"][d], unit) for d in days],
+                "point_radius": 0,
+                "span_gaps": True,
+            },
+            "stats": block,
+        }
+
+    def _hot_days_trend_card(self, block, stats, station, unit="C"):
         label = _hot_or_warm(block["threshold_c"])
         years = sorted(block["series"].keys())
         return {
             "id": "hot_days_trend", "kind": "trend",
             "headline": f"{block['current_summer_count']} {label} days",
             "sentence": (
-                f"{block['current_summer_count']} days topped {_c(block['threshold_c'])} "
+                f"{block['current_summer_count']} days topped {_temp(block['threshold_c'], 0, unit)} "
                 f"this summer. Versus a pre-2010 "
                 f"average of {block['historical_mean_count']:.1f}."
             ),
@@ -145,35 +190,12 @@ class TemplateNarrator(Narrator):
             "stats": block,
         }
 
-    def _first_last_hot_day_card(self, block, stats, station):
-        label = _hot_or_warm(block["threshold_c"])
-        first_diff = block["first_hot_day_days_diff"]
-        last_diff = block["last_hot_day_days_diff"]
-        first_direction = "earlier" if first_diff < 0 else "later"
-        last_direction = "later" if last_diff >= 0 else "earlier"
-        return {
-            "id": "first_last_hot_day", "kind": "stat",
-            "headline": (
-                f"{_fmt_month_day(block['current_first_hot_day'])} – "
-                f"{_fmt_month_day(block['current_last_hot_day'])}"
-            ),
-            "sentence": (
-                f"The first {label} day this summer was {_fmt_month_day(block['current_first_hot_day'])}, "
-                f"{abs(first_diff)} day{'s' if abs(first_diff) != 1 else ''} {first_direction} than the "
-                f"pre-2010 average of {_fmt_month_day(block['historical_avg_first_hot_day'])}. "
-                f"The last one was {_fmt_month_day(block['current_last_hot_day'])}, "
-                f"{abs(last_diff)} day{'s' if abs(last_diff) != 1 else ''} {last_direction} than the "
-                f"average of {_fmt_month_day(block['historical_avg_last_hot_day'])}."
-            ),
-            "stats": block,
-        }
-
-    def _hottest_nights_card(self, block, stats, station):
+    def _hottest_nights_card(self, block, stats, station, unit="C"):
         label = _hot_or_warm(block["night_threshold_c"])
         years = sorted(block["series"].keys())
         sentence = (
             f"{block['current_summer_count']} nights stayed above "
-            f"{_c(block['night_threshold_c'])} this summer, versus a pre-2010 "
+            f"{_temp(block['night_threshold_c'], 0, unit)} this summer, versus a pre-2010 "
             f"average of {block['historical_mean_count']:.1f}."
         )
         if block["diurnal_range_current_c"] is not None and block["diurnal_range_baseline_c"] is not None:
@@ -183,8 +205,8 @@ class TemplateNarrator(Narrator):
             )
             sentence += (
                 f" The gap between daily highs and lows was {narrow_direction} too: "
-                f"{_c(block['diurnal_range_current_c'], 1)} this summer versus "
-                f"{_c(block['diurnal_range_baseline_c'], 1)} historically."
+                f"{_temp_delta(block['diurnal_range_current_c'], 1, unit)} this summer versus "
+                f"{_temp_delta(block['diurnal_range_baseline_c'], 1, unit)} historically."
             )
         return {
             "id": "hottest_nights", "kind": "trend",
@@ -198,33 +220,34 @@ class TemplateNarrator(Narrator):
             "stats": block,
         }
 
-    def _avg_temp_trend_card(self, block, stats, station):
+    def _avg_temp_trend_card(self, block, stats, station, unit="C"):
         years = sorted(block["series"].keys())
         diff = block["current_rolling_mean_c"] - block["series"][years[0]]
         direction = "warmer" if diff >= 0 else "colder"
         return {
             "id": "avg_temp_trend", "kind": "trend",
-            "headline": _c(block["current_rolling_mean_c"], 1),
+            "headline": _temp(block["current_rolling_mean_c"], 1, unit),
             "sentence": (
                 f"The 5-year rolling average of daily high temperature is now "
-                f"{_c(block['current_rolling_mean_c'], 1)}. That's {_c(abs(diff), 1)} "
-                f"{direction} than when this station started measuring."
+                f"{_temp(block['current_rolling_mean_c'], 1, unit)}. That's {_temp_delta(abs(diff), 1, unit)} "
+                f"{direction} than when this station started measuring in {block['record_start_year']}."
             ),
             "chart": {
                 "type": "line",
                 "labels": [str(y) for y in years],
-                "data": [block["series"][y] for y in years],
+                "data": [_to_unit(block["series"][y], unit) for y in years],
+                "point_radius": 0,
             },
             "stats": block,
         }
 
-    def _percentile_rank_card(self, block, stats, station):
+    def _percentile_rank_card(self, block, stats, station, unit="C"):
         rank_word = _ordinal(block["rank"])
         top_list = [
             {
                 "rank": item["rank"],
                 "label": str(item["year"]),
-                "value": _c(item["mean_tmax_c"], 1),
+                "value": _temp(item["mean_tmax_c"], 1, unit),
                 "is_current_summer": item["is_current_summer"],
             }
             for item in block["top_summers"]
@@ -243,7 +266,7 @@ class TemplateNarrator(Narrator):
             "stats": block,
         }
 
-    def _precip_total_card(self, block, stats, station):
+    def _precip_total_card(self, block, stats, station, unit="C"):
         years = sorted(block["series"].keys())
         direction = "wetter" if block["current_total_mm"] >= block["historical_mean_mm"] else "drier"
         diff_mm = abs(block["current_total_mm"] - block["historical_mean_mm"])
